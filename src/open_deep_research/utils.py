@@ -30,6 +30,7 @@ from mcp import McpError
 from tavily import AsyncTavilyClient
 
 from open_deep_research.configuration import Configuration, SearchAPI
+from open_deep_research.ingest_documents import retriever
 from open_deep_research.prompts import summarize_webpage_prompt
 from open_deep_research.state import ResearchComplete, Summary
 
@@ -576,7 +577,7 @@ async def get_all_tools(config: RunnableConfig):
         List of all configured and available tools for research operations
     """
     # Start with core research tools
-    tools = [tool(ResearchComplete), think_tool]
+    tools = [tool(ResearchComplete), think_tool, search_internal_documents]
     
     # Add configured search tools
     configurable = Configuration.from_runnable_config(config)
@@ -599,6 +600,30 @@ async def get_all_tools(config: RunnableConfig):
 def get_notes_from_tool_calls(messages: list[MessageLikeRepresentation]):
     """Extract notes from tool call messages."""
     return [tool_msg.content for tool_msg in filter_messages(messages, include_types="tool")]
+
+@tool(description="Search for relevant information from internal documents")
+async def search_internal_documents(query: str) -> str:
+    """This tool is used to search for relevant information from internal documents.
+
+    This tool should be used to search for relevant information from internal documents.
+    """
+
+    results = await retriever.ainvoke(query)
+
+    print("Search internal tool called!!!!!!")
+
+    formatted_results = []
+    for i, doc in enumerate(results, 1):
+        filename = doc.metadata.get("filename", "Unknown")
+        page_num = doc.metadata.get("page_number", "N/A")
+        chunk_idx = doc.metadata.get("chunk_index", "N/A")
+        source_id = f"{filename}-page{page_num}-chunk{chunk_idx}"
+
+        formatted_results.append(
+            f"""--- SOURCE {i}: [{filename}] ---  URL/ID: {source_id}  PAGE: {page_num}  SUMMARY:  {doc.page_content}"""
+        )
+
+    return "\n\n".join(formatted_results)
 
 ##########################
 # Model Provider Native Websearch Utils
