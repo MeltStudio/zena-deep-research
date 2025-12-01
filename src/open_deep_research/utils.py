@@ -31,7 +31,7 @@ from tavily import AsyncTavilyClient
 
 from open_deep_research.configuration import Configuration, SearchAPI
 from open_deep_research.ingest_documents import retriever
-from open_deep_research.prompts import summarize_webpage_prompt
+from open_deep_research.prompts import summarize_webpage_prompt, summarize_internal_document_prompt
 from open_deep_research.state import ResearchComplete, Summary
 
 ##########################
@@ -212,6 +212,46 @@ async def summarize_webpage(model: BaseChatModel, webpage_content: str) -> str:
         # Other errors during summarization - log and return original content
         logging.warning(f"Summarization failed with error: {str(e)}, returning original content")
         return webpage_content
+
+async def summarize_internal_document(model: BaseChatModel, document_content: str) -> str:
+    """Summarize internal document content using AI model with timeout protection.
+    
+    Args:
+        model: The chat model configured for summarization
+        document_content: Raw document content to be summarized
+        
+    Returns:
+        Formatted summary with key excerpts, or original content if summarization fails
+    """
+    try:
+        # Create prompt with current date context
+        prompt_content = summarize_internal_document_prompt.format(
+            document_content=document_content, 
+            date=get_today_str()
+        )
+        
+        # Execute summarization with timeout to prevent hanging
+        summary = await asyncio.wait_for(
+            model.ainvoke([HumanMessage(content=prompt_content)]),
+            timeout=60.0  # 60 second timeout for summarization
+        )
+        
+        # Format the summary with structured sections
+        formatted_summary = (
+            f"<summary>\n{summary.summary}\n</summary>\n\n"
+            f"<key_excerpts>\n{summary.key_excerpts}\n</key_excerpts>"
+        )
+        
+        return formatted_summary
+        
+    except asyncio.TimeoutError:
+        # Timeout during summarization - return original content
+        logging.warning("Internal document summarization timed out after 60 seconds, returning original content")
+        return document_content
+    except Exception as e:
+        # Other errors during summarization - log and return original content
+        logging.warning(f"Internal document summarization failed with error: {str(e)}, returning original content")
+        return document_content
 
 ##########################
 # Reflection Tool Utils
@@ -602,28 +642,113 @@ def get_notes_from_tool_calls(messages: list[MessageLikeRepresentation]):
     return [tool_msg.content for tool_msg in filter_messages(messages, include_types="tool")]
 
 @tool(description="Search for relevant information from internal documents")
-async def search_internal_documents(query: str) -> str:
+async def search_internal_documents(
+    queries: List[str],
+    config: RunnableConfig = None
+) -> str:
     """This tool is used to search for relevant information from internal documents.
 
     This tool should be used to search for relevant information from internal documents.
+    
+    Args:
+        queries: List of search queries to execute against internal documents
+        config: Runtime configuration for API keys and model settings
+        
+    Returns:
+        Formatted string containing summarized search results from all queries
     """
-
-    results = await retriever.ainvoke(query)
-
-    print("Search internal tool called!!!!!!")
-
-    formatted_results = []
-    for i, doc in enumerate(results, 1):
-        filename = doc.metadata.get("filename", "Unknown")
-        page_num = doc.metadata.get("page_number", "N/A")
-        chunk_idx = doc.metadata.get("chunk_index", "N/A")
-        source_id = f"{filename}-page{page_num}-chunk{chunk_idx}"
-
-        formatted_results.append(
-            f"""--- SOURCE {i}: [{filename}] ---  URL/ID: {source_id}  PAGE: {page_num}  SUMMARY:  {doc.page_content}"""
+    # Step 1: Execute all search queries asynchronously in parallel
+    search_tasks = [
+        retriever.ainvoke(query)
+        for query in queries
+    ]
+    
+    all_results = await asyncio.gather(*search_tasks)
+    
+    # Step 2: Deduplicate results by source_id to avoid processing the same content multiple times
+    unique_results = {}
+    for query, results in zip(queries, all_results):
+        for doc in results:
+            filename = doc.metadata.get("filename", "Unknown")
+            page_num = doc.metadata.get("page_number", "N/A")
+            chunk_idx = doc.metadata.get("chunk_index", "N/A")
+            source_id = f"{filename}-page{page_num}-chunk{chunk_idx}"
+            
+            # Only keep the first occurrence of each source
+            if source_id not in unique_results:
+                unique_results[source_id] = {
+                    "doc": doc,
+                    "query": query,
+                    "filename": filename,
+                    "page_num": page_num,
+                    "chunk_idx": chunk_idx
+                }
+    
+    # Step 3: Check if we have results
+    if not unique_results:
+        return "No relevant documents found. Please try different search queries."
+    
+    # Step 4: Set up the summarization model with configuration
+    configurable = Configuration.from_runnable_config(config)
+    
+    # Character limit to stay within model token limits (configurable)
+    max_char_to_include = configurable.max_content_length
+    
+    # Initialize summarization model with retry logic
+    model_api_key = get_api_key_for_model(configurable.summarization_model, config)
+    summarization_model = init_chat_model(
+        model=configurable.summarization_model,
+        max_tokens=configurable.summarization_model_max_tokens,
+        api_key=model_api_key,
+        tags=["langsmith:nostream"]
+    ).with_structured_output(Summary).with_retry(
+        stop_after_attempt=configurable.max_structured_output_retries
+    )
+    
+    # Step 5: Create summarization tasks (skip empty content)
+    async def noop():
+        """No-op function for results without content."""
+        return None
+    
+    summarization_tasks = [
+        noop() if not result["doc"].page_content 
+        else summarize_internal_document(
+            summarization_model, 
+            result["doc"].page_content[:max_char_to_include]
         )
-
-    return "\n\n".join(formatted_results)
+        for result in unique_results.values()
+    ]
+    
+    # Step 6: Execute all summarization tasks in parallel
+    summaries = await asyncio.gather(*summarization_tasks)
+    
+    # Step 7: Combine results with their summaries
+    summarized_results = {
+        source_id: {
+            'filename': result['filename'],
+            'page_num': result['page_num'],
+            'chunk_idx': result['chunk_idx'],
+            'query': result['query'],
+            'content': result['doc'].page_content if summary is None else summary
+        }
+        for source_id, result, summary in zip(
+            unique_results.keys(), 
+            unique_results.values(), 
+            summaries
+        )
+    }
+    
+    # Step 8: Format the final output
+    formatted_output = "Search results from internal documents: \n\n"
+    for i, (source_id, result) in enumerate(summarized_results.items()):
+        formatted_output += f"\n\n--- SOURCE {i+1}: [{result['filename']}] ---\n"
+        formatted_output += f"URL/ID: {source_id}\n"
+        formatted_output += f"PAGE: {result['page_num']}\n"
+        formatted_output += f"QUERY: {result['query']}\n\n"
+        formatted_output += f"SUMMARY:\n{result['content']}\n\n"
+        formatted_output += "\n\n" + "-" * 80 + "\n"
+    
+    return formatted_output
 
 ##########################
 # Model Provider Native Websearch Utils

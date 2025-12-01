@@ -98,6 +98,7 @@ Think like a research manager with limited time and resources. Follow these step
 1. **Read the question carefully** - What specific information does the user need?
 2. **Decide how to delegate the research** - Carefully consider the question and decide how to delegate the research. Are there multiple independent directions that can be explored simultaneously?
 3. **After each call to ConductResearch, pause and assess** - Do I have enough to answer? What's still missing?
+4. **Use search_internal_documents first** - Use search_internal_documents to gather information from internal documents first in order to get possible insights that couldn't be found with web searches and then research about the topic via web searches.
 </Instructions>
 
 <Hard Limits>
@@ -144,8 +145,8 @@ You can use any of the tools provided to you to find resources that can help ans
 
 <Available Tools>
 You have access to three main tools:
-1. **tavily_search**: For conducting web searches to gather information
-2. **search_internal_documents**: For conducting searches to gather information from internal documents
+1. **search_internal_documents**: For conducting searches to gather information from internal documents.
+2. **tavily_search**: For conducting web searches to gather information
 3. **think_tool**: For reflection and strategic planning during research
 {mcp_prompt}
 
@@ -364,6 +365,65 @@ Example 2 (for a scientific article):
 ```
 
 Remember, your goal is to create a summary that can be easily understood and utilized by a downstream research agent while preserving the most critical information from the original webpage.
+
+Today's date is {date}.
+"""
+
+summarize_internal_document_prompt = """You are tasked with summarizing content from an internal document chunk retrieved from a document search. Your goal is to create a summary that preserves the most important information from the document chunk. This summary will be used by a downstream research agent, so it's crucial to maintain the key details without losing essential information.
+
+Here is the content from the internal document:
+
+<document_content>
+{document_content}
+</document_content>
+
+Please follow these guidelines to create your summary:
+
+1. Identify and preserve the main topic or purpose of the document chunk.
+2. Retain key facts, statistics, and data points that are central to the content's message.
+3. Keep important statements, findings, or conclusions.
+4. Maintain the logical flow of information if the content builds on concepts.
+5. Preserve any lists, tables, or structured information if present.
+6. Include relevant technical terms, product names, or specific details that are crucial to understanding the content.
+7. Summarize lengthy explanations while keeping the core message intact.
+
+When handling different types of content:
+
+- For technical documents: Preserve key specifications, processes, and technical details.
+- For research documents: Maintain methodology, findings, and conclusions.
+- For business documents: Keep strategic points, recommendations, and key metrics.
+- For product documents: Preserve features, benefits, and unique characteristics.
+
+Your summary should be concise but comprehensive enough to stand alone as a source of information. Aim for about 30-40 percent of the original length, unless the content is already very concise.
+
+Present your summary in the following format:
+
+```
+{{
+   "summary": "Your summary here, structured with appropriate paragraphs or bullet points as needed",
+   "key_excerpts": "First important statement or excerpt, Second important statement or excerpt, Third important statement or excerpt, ...Add more excerpts as needed, up to a maximum of 5"
+}}
+```
+
+Here are two examples of good summaries:
+
+Example 1 (for a technical document):
+```json
+{{
+   "summary": "The EnteriCare technology utilizes a specialized coating system designed to protect sensitive ingredients through the digestive tract. The tri-layer encapsulation consists of an outer pH-resistant polymer, a middle lipid barrier, and an inner matrix containing the active ingredient. This system ensures ingredient stability in gastric acid (pH 1.5-3.0) while allowing controlled release in the small intestine (pH 6.5-7.5). Clinical trials demonstrated 85% ingredient retention through stomach transit compared to 23% with standard formulations.",
+   "key_excerpts": "The tri-layer encapsulation consists of an outer pH-resistant polymer, a middle lipid barrier, and an inner matrix containing the active ingredient. Clinical trials demonstrated 85% ingredient retention through stomach transit. The technology is compatible with both water-soluble and lipid-soluble active ingredients. Release profile can be customized based on target intestinal location."
+}}
+```
+
+Example 2 (for a research document):
+```json
+{{
+   "summary": "Market research conducted in Q2 2016 revealed strong consumer interest in fish oil supplements among health-conscious demographics. Survey data from 1,200 participants indicated that 68% associate fish oil with cardiovascular benefits, while 45% recognize its anti-inflammatory properties. Key purchasing factors included purity certification (mentioned by 72% of respondents), absence of fishy aftertaste (58%), and sustainable sourcing (41%). The research identified three distinct consumer segments: preventive health seekers, medical recommendation followers, and athletic performance optimizers.",
+   "key_excerpts": "68% associate fish oil with cardiovascular benefits, while 45% recognize its anti-inflammatory properties. Key purchasing factors included purity certification (72%), absence of fishy aftertaste (58%), and sustainable sourcing (41%). Three distinct consumer segments were identified: preventive health seekers, medical recommendation followers, and athletic performance optimizers."
+}}
+```
+
+Remember, your goal is to create a summary that can be easily understood and utilized by a downstream research agent while preserving the most critical information from the internal document.
 
 Today's date is {date}.
 """

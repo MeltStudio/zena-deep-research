@@ -366,7 +366,7 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
     """Individual researcher that conducts focused research on specific topics.
     
     This researcher is given a specific research topic by the supervisor and uses
-    available tools (search, think_tool, MCP tools) to gather comprehensive information.
+    available tools (search, think_tool, search_internal_documents) to gather comprehensive information.
     It can use think_tool for strategic planning between searches.
     
     Args:
