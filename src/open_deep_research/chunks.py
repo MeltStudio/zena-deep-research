@@ -99,7 +99,6 @@ def chunk_text(
     tokenizer = tiktoken.get_encoding("cl100k_base")
 
     # Initialize TokenChunker with overlap for context continuity
-    print(f"   Chunk config: {chunk_size} tokens with {chunk_overlap} token overlap")
     chunker = TokenChunker(
         tokenizer=tokenizer,
         chunk_size=chunk_size,
@@ -165,24 +164,14 @@ def process_pdf(
     if not pdf_path.lower().endswith(".pdf"):
         raise ValueError(f"File must be a PDF: {pdf_path}")
 
-    print(f"\n📄 Processing PDF: {pdf_path}")
-
     # Step 1: Extract text from PDF
-    print("   Extracting text...")
     full_text, page_info = extract_pdf_text(pdf_path)
-    print(f"   ✅ Extracted {len(full_text)} characters from PDF")
 
     # Step 2: Clean the extracted text
-    print("   Cleaning text...")
     full_text = clean_text(full_text)
-    print(f"   ✅ Cleaned text: {len(full_text)} characters")
 
     # Step 3: Generate chunks
-    print("   Chunking document...")
     chunks = chunk_text(full_text, page_info, chunk_size, chunk_overlap)
-    print(f"   ✅ Created {len(chunks)} chunks")
-
-    print("\n✅ Document processing completed!\n")
     return chunks
 
 
@@ -192,7 +181,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         pdf_path = sys.argv[1]
     else:
-        print("Usage: python chunk_and_embed_from_url.py <path_to_pdf>")
+        print("Usage: python chunks.py <path_to_pdf>")  
         sys.exit(1)
 
     # Process document and get chunks

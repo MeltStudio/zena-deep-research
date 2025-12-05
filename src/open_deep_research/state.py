@@ -8,6 +8,8 @@ from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
+from open_deep_research.conts import documents_source1
+
 
 ###################
 # Structured Outputs
@@ -20,6 +22,15 @@ class ConductResearch(BaseModel):
 
 class ResearchComplete(BaseModel):
     """Call this tool to indicate that the research is complete."""
+
+class ConductReportResearch(BaseModel):
+    """Call this tool to conduct report research for a specific section of the report."""
+    report_section: str = Field(
+        description="The section of the report to research. Should be a single section, and should be described in high detail (at least a paragraph).",
+    )
+
+class ReportResearchComplete(BaseModel):
+    """Call this tool to indicate that you have all the findings for all the sections of the report."""
 
 class Summary(BaseModel):
     """Research summary with key findings."""
@@ -47,6 +58,12 @@ class ResearchQuestion(BaseModel):
         description="A research question that will be used to guide the research.",
     )
 
+class ReportPlan(BaseModel):
+    """Report plan for guiding report writing."""
+    report_plan: str = Field(
+        description="A report plan that will be used to guide the report writing.",
+    )
+
 
 ###################
 # State Definitions
@@ -66,9 +83,12 @@ class AgentState(MessagesState):
     """Main agent state containing messages and research data."""
     
     supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
+    report_supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
     research_brief: Optional[str]
+    report_plan: Optional[str]
     raw_notes: Annotated[list[str], override_reducer] = []
     notes: Annotated[list[str], override_reducer] = []
+    report_section_sketches: Annotated[list[str], override_reducer] = []
     final_report: str
 
 class SupervisorState(TypedDict):
@@ -89,8 +109,30 @@ class ResearcherState(TypedDict):
     compressed_research: str
     raw_notes: Annotated[list[str], override_reducer] = []
 
-class ResearcherOutputState(BaseModel):
+class ReportResearcherState(TypedDict):
+    """State for individual researchers conducting research."""
+    
+    report_researcher_messages: Annotated[list[MessageLikeRepresentation], operator.add]
+    tool_call_iterations: int = 0
+    report_section: str
+    compressed_research: str
+    report_section_sketch: str
+    raw_notes: Annotated[list[str], override_reducer] = []
+
+class ResearcherOutputState(TypedDict):
     """Output state from individual researchers."""
     
     compressed_research: str
     raw_notes: Annotated[list[str], override_reducer] = []
+    report_section_sketch: str
+
+class ReportSupervisorState(TypedDict):
+    """State for the report supervisor that conducts report research for each section of the report."""
+    
+    report_supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
+    report_research_iterations: int = 0
+    report_section_sketches: Annotated[list[str], override_reducer] = []
+    notes: Annotated[list[str], override_reducer] = []
+    raw_notes: Annotated[list[str], override_reducer] = []
+    report_plan: str
+    report_findings_sections: Annotated[list[str], override_reducer] = []

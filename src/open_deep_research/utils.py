@@ -3,9 +3,10 @@
 import asyncio
 import logging
 import os
+import re
 import warnings
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
 
 import aiohttp
 from langchain.chat_models import init_chat_model
@@ -30,9 +31,186 @@ from mcp import McpError
 from tavily import AsyncTavilyClient
 
 from open_deep_research.configuration import Configuration, SearchAPI
-from open_deep_research.ingest_documents import retriever
+from open_deep_research.vector_store import (
+    internal_documents_retriever,
+    research_findings_retriever,
+    research_findings_store,
+)
 from open_deep_research.prompts import summarize_webpage_prompt, summarize_internal_document_prompt
 from open_deep_research.state import ResearchComplete, Summary
+
+# Re-export for backward compatibility
+retriever = internal_documents_retriever
+
+def get_research_retriever():
+    """Get the research findings retriever from the unified vector store."""
+    return research_findings_retriever
+
+##########################
+# Citation Parsing Utils
+##########################
+
+def extract_sources_section(text: str) -> Tuple[str, str]:
+    """Extract the Sources section from compressed research text.
+    
+    Splits the text at the ### Sources header (or similar variations) and returns
+    the findings portion and the sources portion separately.
+    
+    Args:
+        text: The full compressed research text containing findings and sources
+        
+    Returns:
+        Tuple of (findings_text, sources_text). If no sources section found,
+        returns (original_text, "")
+    """
+    # Try multiple patterns for the sources header (strict first, then flexible)
+    patterns = [
+        r'\n### Sources\s*\n',           # Exact format (preferred)
+        r'\n##\s*Sources\s*\n',          # Two hashes
+        r'\n#\s*Sources\s*\n',           # One hash
+        r'\n\*\*Sources\*\*\s*\n',       # Bold markdown
+        r'\nSources:\s*\n',              # Simple with colon
+        r'\nSources\s*\n',               # Simple without colon
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            findings_text = text[:match.start()].strip()
+            sources_text = text[match.end():].strip()
+            return findings_text, sources_text
+    
+    # No sources section found
+    return text.strip(), ""
+
+
+def parse_sources_to_mapping(sources_text: str) -> Dict[int, Dict[str, str]]:
+    """Parse sources section into a mapping of citation number to source info.
+    
+    Handles multiple formats flexibly:
+    - [1] Source Title: URL
+    - 1. Source Title: URL
+    - [1]. Source Title: URL
+    - (1) Source Title: URL
+    
+    Args:
+        sources_text: The sources section text (after ### Sources header)
+        
+    Returns:
+        Dictionary mapping citation number to {"title": "...", "url": "..."}
+        Example: {1: {"title": "Nature Study", "url": "https://..."}, ...}
+    """
+    sources_mapping = {}
+    
+    if not sources_text:
+        return sources_mapping
+    
+    # Split into lines and process each
+    lines = sources_text.strip().split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Try to extract citation number with flexible patterns
+        # Pattern matches: [1], 1., [1]., (1), 1)
+        number_match = re.match(
+            r'^\[?(\d+)\]?\.?\)?\.?\s*(.+)$',
+            line
+        )
+        
+        if not number_match:
+            continue
+        
+        citation_num = int(number_match.group(1))
+        rest_of_line = number_match.group(2).strip()
+        
+        # Extract URL from the line
+        url = extract_url_from_source_line(rest_of_line)
+        
+        # Extract title (everything before the URL, or before the colon if URL follows)
+        title = extract_title_from_source_line(rest_of_line, url)
+        
+        sources_mapping[citation_num] = {
+            "title": title,
+            "url": url,
+            "full_citation": f"[{citation_num}] {title}: {url}" if url else f"[{citation_num}] {rest_of_line}"
+        }
+    
+    return sources_mapping
+
+
+def extract_url_from_source_line(line: str) -> str:
+    """Extract URL from a source line using robust regex.
+    
+    Args:
+        line: A single source line (without the citation number prefix)
+        
+    Returns:
+        The extracted URL or empty string if none found
+    """
+    # URL pattern that matches http/https URLs
+    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+    
+    match = re.search(url_pattern, line)
+    if match:
+        url = match.group(0)
+        # Clean up trailing punctuation that might have been captured
+        url = url.rstrip('.,;:)')
+        return url
+    
+    return ""
+
+
+def extract_title_from_source_line(line: str, url: str) -> str:
+    """Extract the title portion from a source line.
+    
+    Args:
+        line: The source line (without citation number prefix)
+        url: The already-extracted URL
+        
+    Returns:
+        The title portion of the source
+    """
+    if not url:
+        # No URL found, try to split at colon
+        if ':' in line:
+            return line.split(':')[0].strip()
+        return line.strip()
+    
+    # Find where the URL starts and take everything before it
+    url_start = line.find(url)
+    if url_start > 0:
+        title = line[:url_start].strip()
+        # Remove trailing colon or hyphen
+        title = title.rstrip(':- ')
+        return title
+    
+    return line.replace(url, '').strip().rstrip(':- ')
+
+
+def detect_citations_in_text(text: str) -> List[int]:
+    """Detect all citation numbers referenced in a text chunk.
+    
+    Finds patterns like [1], [2], [12], etc. in the text.
+    
+    Args:
+        text: The text to search for citations
+        
+    Returns:
+        Sorted list of unique citation numbers found (as integers)
+    """
+    # Pattern to match [N] where N is one or more digits
+    pattern = r'\[(\d+)\]'
+    
+    matches = re.findall(pattern, text)
+    
+    # Convert to integers and deduplicate
+    citation_numbers = sorted(set(int(m) for m in matches))
+    
+    return citation_numbers
+
 
 ##########################
 # Tavily Search Tool Utils
@@ -193,7 +371,7 @@ async def summarize_webpage(model: BaseChatModel, webpage_content: str) -> str:
         # Execute summarization with timeout to prevent hanging
         summary = await asyncio.wait_for(
             model.ainvoke([HumanMessage(content=prompt_content)]),
-            timeout=60.0  # 60 second timeout for summarization
+            timeout=120.0  # 120 second timeout for summarization
         )
         
         # Format the summary with structured sections
@@ -206,7 +384,7 @@ async def summarize_webpage(model: BaseChatModel, webpage_content: str) -> str:
         
     except asyncio.TimeoutError:
         # Timeout during summarization - return original content
-        logging.warning("Summarization timed out after 60 seconds, returning original content")
+        logging.warning("Summarization timed out after 120 seconds, returning original content")
         return webpage_content
     except Exception as e:
         # Other errors during summarization - log and return original content
@@ -233,7 +411,7 @@ async def summarize_internal_document(model: BaseChatModel, document_content: st
         # Execute summarization with timeout to prevent hanging
         summary = await asyncio.wait_for(
             model.ainvoke([HumanMessage(content=prompt_content)]),
-            timeout=60.0  # 60 second timeout for summarization
+            timeout=120.0  # 120 second timeout for summarization
         )
         
         # Format the summary with structured sections
@@ -246,7 +424,7 @@ async def summarize_internal_document(model: BaseChatModel, document_content: st
         
     except asyncio.TimeoutError:
         # Timeout during summarization - return original content
-        logging.warning("Internal document summarization timed out after 60 seconds, returning original content")
+        logging.warning("Internal document summarization timed out after 120 seconds, returning original content")
         return document_content
     except Exception as e:
         # Other errors during summarization - log and return original content
@@ -750,6 +928,213 @@ async def search_internal_documents(
     
     return formatted_output
 
+def get_research_vector_store():
+    """Get the research findings vector store from the unified vector store module."""
+    return research_findings_store
+
+
+def lookup_citation_sources(
+    research_session_id: str,
+    citation_numbers: List[int]
+) -> Dict[int, str]:
+    """Look up citation sources from Chroma vector store by session ID and citation numbers.
+    
+    Args:
+        research_session_id: The unique session ID linking findings to sources
+        citation_numbers: List of citation numbers to look up
+        
+    Returns:
+        Dictionary mapping citation number to full citation string
+    """
+    if not citation_numbers:
+        return {}
+    
+    try:
+        vector_store = get_research_vector_store()
+        sources_found = {}
+        
+        # Use Chroma's get() method with metadata filtering
+        # Query for citation_source documents from this session
+        results = vector_store.get(
+            where={
+                "$and": [
+                    {"chunk_type": {"$eq": "citation_source"}},
+                    {"research_session_id": {"$eq": str(research_session_id)}}
+                ]
+            }
+        )
+        
+        # Process results if any documents were found
+        if results and results.get("documents"):
+            documents = results.get("documents", [])
+            metadatas = results.get("metadatas", [])
+            
+            for doc_content, metadata in zip(documents, metadatas):
+                if metadata:
+                    cit_num = metadata.get("citation_number")
+                    if cit_num in citation_numbers:
+                        sources_found[cit_num] = doc_content
+        
+        return sources_found
+        
+    except Exception as e:
+        logging.warning(f"Error looking up citation sources: {e}")
+        return {}
+
+
+@tool(description="Search for relevant information from previously embedded research findings")
+async def search_research_findings(
+    queries: List[str],
+    config: RunnableConfig = None
+) -> str:
+    """This tool is used to search for relevant information from previously embedded research findings.
+
+    Use this tool to search through research that has already been completed.
+    This allows you to retrieve information from past research sessions.
+    Citation sources are automatically looked up and appended to findings.
+    
+    Args:
+        queries: List of search queries to execute against embedded research findings
+        config: Runtime configuration for API keys and model settings
+        
+    Returns:
+        Formatted string containing summarized search results with their citation sources
+    """
+    # Step 1: Get the research retriever
+    try:
+        research_retriever_instance = get_research_retriever()
+        # Add debug logging for Chroma
+        vector_store = get_research_vector_store()
+        try:
+            # Get collection count from Chroma
+            collection = vector_store._collection
+            doc_count = collection.count() if collection else 0
+        except Exception:
+            pass
+    except Exception as e:
+        return f"Error accessing research findings: {str(e)}. Research findings may not be available yet."
+    
+    # Step 2: Execute all search queries asynchronously in parallel
+    search_tasks = [
+        research_retriever_instance.ainvoke(query)
+        for query in queries
+    ]
+    
+    try:
+        all_results = await asyncio.gather(*search_tasks)
+    except Exception as e:
+        return f"Error searching research findings: {str(e)}"
+    
+    # Step 3: Deduplicate results and filter to only findings (not sources)
+    unique_results = {}
+    for query, results in zip(queries, all_results):
+        for doc in results:
+            chunk_type = doc.metadata.get("chunk_type", "Unknown")
+            
+            # Skip citation_source documents - we only want findings
+            if chunk_type == "citation_source":
+                continue
+            
+            chunk_idx = doc.metadata.get("chunk_index", "N/A")
+            research_session_id = doc.metadata.get("research_session_id", "")
+            source_id = f"{chunk_type}-chunk{chunk_idx}-{research_session_id[:8]}"
+            
+            # Only keep the first occurrence of each source
+            if source_id not in unique_results:
+                unique_results[source_id] = {
+                    "doc": doc,
+                    "query": query,
+                    "chunk_type": chunk_type,
+                    "chunk_idx": chunk_idx,
+                    "research_topic": doc.metadata.get("research_topic", "N/A"),
+                    "research_session_id": research_session_id,
+                    "citation_numbers": doc.metadata.get("citation_numbers", []),
+                    "total_chunks": doc.metadata.get("total_chunks", "N/A")
+                }
+    
+    # Step 4: Check if we have results
+    if not unique_results:
+        return "No relevant research findings found. The research findings database may be empty or your queries may not match any embedded content."
+    
+    # Step 5: Set up the summarization model with configuration
+    configurable = Configuration.from_runnable_config(config)
+    
+    # Character limit to stay within model token limits (configurable)
+    max_char_to_include = configurable.max_content_length
+    
+    # Initialize summarization model with retry logic
+    model_api_key = get_api_key_for_model(configurable.summarization_model, config)
+    summarization_model = init_chat_model(
+        model=configurable.summarization_model,
+        max_tokens=configurable.summarization_model_max_tokens,
+        api_key=model_api_key,
+        tags=["langsmith:nostream"]
+    ).with_structured_output(Summary).with_retry(
+        stop_after_attempt=configurable.max_structured_output_retries
+    )
+    
+    # Step 6: Create summarization tasks (skip empty content)
+    async def noop():
+        """No-op function for results without content."""
+        return None
+    
+    summarization_tasks = [
+        noop() if not result["doc"].page_content 
+        else summarize_internal_document(
+            summarization_model, 
+            result["doc"].page_content[:max_char_to_include]
+        )
+        for result in unique_results.values()
+    ]
+    
+    # Step 7: Execute all summarization tasks in parallel
+    summaries = await asyncio.gather(*summarization_tasks)
+    
+    # Step 8: Combine results with their summaries and lookup citation sources
+    summarized_results = {}
+    for (source_id, result), summary in zip(unique_results.items(), summaries):
+        # Look up citation sources for this finding
+        citation_sources = {}
+        if result["citation_numbers"] and result["research_session_id"]:
+            citation_sources = lookup_citation_sources(
+                result["research_session_id"],
+                result["citation_numbers"]
+            )
+        
+        summarized_results[source_id] = {
+            'chunk_type': result['chunk_type'],
+            'chunk_idx': result['chunk_idx'],
+            'research_topic': result['research_topic'],
+            'research_session_id': result['research_session_id'],
+            'citation_numbers': result['citation_numbers'],
+            'citation_sources': citation_sources,
+            'total_chunks': result['total_chunks'],
+            'query': result['query'],
+            'content': result['doc'].page_content if summary is None else summary
+        }
+    
+    # Step 9: Format the final output with citation sources
+    formatted_output = "Search results from embedded research findings: \n\n"
+    for i, (source_id, result) in enumerate(summarized_results.items()):
+        formatted_output += f"\n\n--- RESEARCH FINDING {i+1}: [{result['chunk_type']}] ---\n"
+        formatted_output += f"SOURCE ID: {source_id}\n"
+        formatted_output += f"RESEARCH TOPIC: {result['research_topic'][:100]}...\n" if len(str(result['research_topic'])) > 100 else f"RESEARCH TOPIC: {result['research_topic']}\n"
+        formatted_output += f"CHUNK: {result['chunk_idx']} of {result['total_chunks']}\n"
+        formatted_output += f"QUERY: {result['query']}\n\n"
+        formatted_output += f"SUMMARY:\n{result['content']}\n"
+        
+        # Append referenced sources if available
+        if result['citation_sources']:
+            formatted_output += f"\nREFERENCED SOURCES:\n"
+            for cit_num in sorted(result['citation_sources'].keys()):
+                formatted_output += f"{result['citation_sources'][cit_num]}\n"
+        elif result['citation_numbers']:
+            formatted_output += f"\nCITATIONS REFERENCED: {result['citation_numbers']} (sources not found in store)\n"
+        
+        formatted_output += "\n" + "-" * 80 + "\n"
+    
+    return formatted_output
+
 ##########################
 # Model Provider Native Websearch Utils
 ##########################
@@ -1073,3 +1458,11 @@ def get_tavily_api_key(config: RunnableConfig):
         return api_keys.get("TAVILY_API_KEY")
     else:
         return os.getenv("TAVILY_API_KEY")
+
+# Tool Execution Helper Function
+async def execute_tool_safely(tool, args, config):
+    """Safely execute a tool with error handling."""
+    try:
+        return await tool.ainvoke(args, config)
+    except Exception as e:
+        return f"Error executing tool: {str(e)}"

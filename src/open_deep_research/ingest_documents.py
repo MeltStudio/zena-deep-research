@@ -1,12 +1,19 @@
+"""Internal documents ingestion module.
+
+This module handles processing and ingesting internal PDF documents
+into the unified Chroma vector store for retrieval.
+"""
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from langchain_core.tools import tool
 from langchain_core.documents import Document
-from langchain_core.vectorstores import InMemoryVectorStore
-from langchain_openai import OpenAIEmbeddings
 
 from open_deep_research.chunks import process_pdf
+from open_deep_research.vector_store import (
+    internal_documents_store,
+    internal_documents_retriever,
+)
 
 
 ########################################################
@@ -25,42 +32,53 @@ file_paths = [
     str(docs_dir / "Zena Banner EnteriCare technology description.pdf"),
 ]
 
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
 # Process all PDFs and create Document objects
 all_splits = []
+processed_files = 0
+
 for pdf_path in file_paths:
     if not os.path.exists(pdf_path):
-        print(f"⚠️  Warning: File not found: {pdf_path}")
         continue
 
-    # Process PDF and get chunks
-    chunks = process_pdf(
-        pdf_path=pdf_path,
-        chunk_size=512,
-        chunk_overlap=100,
-    )
-
-    # Get filename for metadata
-    filename = Path(pdf_path).name
-
-    # Convert chunks to LangChain Document objects
-    for chunk in chunks:
-        doc = Document(
-            page_content=chunk["chunk_text"],
-            metadata={
-                "source": pdf_path,
-                "filename": filename,
-                "page_number": chunk.get("page_number"),
-                "chunk_index": chunk.get("chunk_index"),
-                "start_char": chunk.get("start_char"),
-                "end_char": chunk.get("end_char"),
-                "token_count": chunk.get("token_count"),
-            },
+    try:
+        # Process PDF and get chunks
+        chunks = process_pdf(
+            pdf_path=pdf_path,
+            chunk_size=512,
+            chunk_overlap=100,
         )
-        all_splits.append(doc)
 
-vector_store = InMemoryVectorStore(embeddings)
-document_ids = vector_store.add_documents(documents=all_splits)
+        # Get filename for metadata
+        filename = Path(pdf_path).name
 
-retriever = vector_store.as_retriever()
+        # Convert chunks to LangChain Document objects
+        for chunk in chunks:
+            doc = Document(
+                page_content=chunk["chunk_text"],
+                metadata={
+                    "source": pdf_path,
+                    "filename": filename,
+                    "page_number": chunk.get("page_number"),
+                    "chunk_index": chunk.get("chunk_index"),
+                    "start_char": chunk.get("start_char"),
+                    "end_char": chunk.get("end_char"),
+                    "token_count": chunk.get("token_count"),
+                },
+            )
+            all_splits.append(doc)
+        
+        processed_files += 1
+    except Exception as e:
+        print(f"❌ Error processing {pdf_path}: {e}")
+
+# Add documents to vector store if any were processed
+if all_splits:
+    try:
+        document_ids = internal_documents_store.add_documents(documents=all_splits)
+    except Exception as e:
+        print(f"❌ Error adding documents to vector store: {e}")
+elif processed_files == 0:
+    print("⚠️  No documents were processed. Check that PDF files exist in the docs/ directory.")
+
+# Export retriever for backward compatibility
+retriever = internal_documents_retriever

@@ -52,11 +52,11 @@ class Configuration(BaseModel):
         }
     )
     allow_clarification: bool = Field(
-        default=True,
+        default=False,
         metadata={
             "x_oap_ui_config": {
                 "type": "boolean",
-                "default": True,
+                "default": False,
                 "description": "Whether to allow the researcher to ask the user clarifying questions before starting research"
             }
         }
@@ -92,6 +92,32 @@ class Configuration(BaseModel):
         }
     )
     max_researcher_iterations: int = Field(
+        default=3,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "slider",
+                "default": 3,
+                "min": 1,
+                "max": 10,
+                "step": 1,
+                "description": "Maximum number of research iterations for the Research Supervisor. This is the number of times the Research Supervisor will reflect on the research and ask follow-up questions."
+            }
+        }
+    )
+    max_concurrent_report_research_units: int = Field(
+        default=8,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "slider",
+                "default": 8,
+                "min": 1,
+                "max": 20,
+                "step": 1,
+                "description": "Maximum number of report research units to run concurrently. This will allow the report supervisor to use multiple sub-agents to conduct report research."
+            }
+        }
+    )
+    max_report_research_iterations: int = Field(
         default=6,
         metadata={
             "x_oap_ui_config": {
@@ -100,7 +126,7 @@ class Configuration(BaseModel):
                 "min": 1,
                 "max": 10,
                 "step": 1,
-                "description": "Maximum number of research iterations for the Research Supervisor. This is the number of times the Research Supervisor will reflect on the research and ask follow-up questions."
+                "description": "Maximum number of report research iterations for the Report Supervisor. This is the number of times the Report Supervisor will reflect on the report research and ask follow-up questions."
             }
         }
     )
@@ -117,13 +143,26 @@ class Configuration(BaseModel):
             }
         }
     )
+    max_report_research_react_tool_calls: int = Field(
+        default=3,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "slider",
+                "default": 10,
+                "min": 1,
+                "max": 30,
+                "step": 1,
+                "description": "Maximum number of tool calling iterations to make in a single report research step."
+            }
+        }
+    )
     # Model Configuration
     summarization_model: str = Field(
-        default="openai:gpt-4.1-mini",
+        default="openai:gpt-5-nano-2025-08-07",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
-                "default": "openai:gpt-4.1-mini",
+                "default": "openai:gpt-5-nano-2025-08-07",
                 "description": "Model for summarizing research results from Tavily search results"
             }
         }
@@ -151,11 +190,11 @@ class Configuration(BaseModel):
         }
     )
     research_model: str = Field(
-        default="openai:gpt-4.1",
+        default="openai:gpt-5.1-2025-11-13",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
-                "default": "openai:gpt-4.1",
+                "default": "openai:gpt-5.1-2025-11-13",
                 "description": "Model for conducting research. NOTE: Make sure your Researcher Model supports the selected search API."
             }
         }
@@ -171,41 +210,41 @@ class Configuration(BaseModel):
         }
     )
     compression_model: str = Field(
-        default="openai:gpt-4.1",
+        default="openai:gpt-5.1-2025-11-13",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
-                "default": "openai:gpt-4.1",
+                "default": "openai:gpt-5.1-2025-11-13",
                 "description": "Model for compressing research findings from sub-agents. NOTE: Make sure your Compression Model supports the selected search API."
             }
         }
     )
     compression_model_max_tokens: int = Field(
-        default=8192,
+        default=100000,
         metadata={
             "x_oap_ui_config": {
                 "type": "number",
-                "default": 8192,
+                "default": 100000,
                 "description": "Maximum output tokens for compression model"
             }
         }
     )
     final_report_model: str = Field(
-        default="openai:gpt-4.1",
+        default="openai:gpt-5-2025-08-07",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
-                "default": "openai:gpt-4.1",
+                "default": "openai:gpt-5-2025-08-07",
                 "description": "Model for writing the final report from all research findings"
             }
         }
     )
     final_report_model_max_tokens: int = Field(
-        default=10000,
+        default=100000,
         metadata={
             "x_oap_ui_config": {
                 "type": "number",
-                "default": 10000,
+                "default": 100000,
                 "description": "Maximum output tokens for final report model"
             }
         }
@@ -228,6 +267,87 @@ class Configuration(BaseModel):
             "x_oap_ui_config": {
                 "type": "text",
                 "description": "Any additional instructions to pass along to the Agent regarding the MCP tools that are available to it."
+            }
+        }
+    )
+    # Report Writing Configuration
+    report_plan_model: str = Field(
+        default="openai:gpt-5-2025-08-07",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "openai:gpt-5-2025-08-07",
+                "description": "Model for writing the report plan"
+            }
+        }
+    )
+    report_plan_model_max_tokens: int = Field(
+        default=10000,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "number",
+                "default": 10000,
+                "description": "Maximum output tokens for report plan model"
+            }
+        }
+    )
+    report_supervisor_model: str = Field(
+        default="openai:gpt-5-2025-08-07",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "openai:gpt-5-2025-08-07",
+                "description": "Model for the report supervisor"
+            }
+        }
+    )
+    report_supervisor_model_max_tokens: int = Field(
+        default=10000,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "number",
+                "default": 10000,
+                "description": "Maximum output tokens for report supervisor model"
+            }
+        }
+    )
+    report_researcher_model: str = Field(
+        default="openai:gpt-5-2025-08-07",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "openai:gpt-5-2025-08-07",
+                "description": "Model for the report researcher"
+            }
+        }
+    )
+    report_researcher_model_max_tokens: int = Field(
+        default=10000,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "number",
+                "default": 10000,
+                "description": "Maximum output tokens for report researcher model"
+            }
+        }
+    )
+    write_report_section_model: str = Field(
+        default="openai:gpt-5-2025-08-07",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "openai:gpt-5-2025-08-07",
+                "description": "Model for writing report sections from compressed research"
+            }
+        }
+    )
+    write_report_section_model_max_tokens: int = Field(
+        default=10000,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "number",
+                "default": 10000,
+                "description": "Maximum output tokens for write report section model"
             }
         }
     )

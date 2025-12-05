@@ -1,6 +1,7 @@
 """Main LangGraph implementation for the Deep Research agent."""
 
 import asyncio
+import uuid
 from typing import Literal
 
 from langchain.chat_models import init_chat_model
@@ -28,6 +29,7 @@ from open_deep_research.prompts import (
     research_system_prompt,
     transform_messages_into_research_topic_prompt,
 )
+from open_deep_research.write_report import report_supervisor_subgraph, write_report_plan
 from open_deep_research.state import (
     AgentInputState,
     AgentState,
@@ -41,6 +43,9 @@ from open_deep_research.state import (
 )
 from open_deep_research.utils import (
     anthropic_websearch_called,
+    detect_citations_in_text,
+    execute_tool_safely,
+    extract_sources_section,
     get_all_tools,
     get_api_key_for_model,
     get_model_token_limit,
@@ -51,11 +56,26 @@ from open_deep_research.utils import (
     remove_up_to_last_ai_message,
     think_tool,
 )
+from open_deep_research.chunks import chunk_text
+from langchain_core.documents import Document
+from open_deep_research.vector_store import (
+    research_findings_store,
+    research_findings_retriever,
+)
+
+# Import ingest_documents to ensure internal documents are loaded on startup
+# This ensures PDFs are processed and added to the vector store when langgraph dev starts
+import open_deep_research.ingest_documents  # noqa: F401
 
 # Initialize a configurable model that we will use throughout the agent
 configurable_model = init_chat_model(
     configurable_fields=("model", "max_tokens", "api_key"),
 )
+
+# Re-export for backward compatibility with utils.py and tests
+research_vector_store = research_findings_store
+research_retriever = research_findings_retriever
+
 
 async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Command[Literal["write_research_brief", "__end__"]]:
     """Analyze user messages and ask clarifying questions if the research scope is unclear.
@@ -423,14 +443,6 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
         }
     )
 
-# Tool Execution Helper Function
-async def execute_tool_safely(tool, args, config):
-    """Safely execute a tool with error handling."""
-    try:
-        return await tool.ainvoke(args, config)
-    except Exception as e:
-        return f"Error executing tool: {str(e)}"
-
 
 async def researcher_tools(state: ResearcherState, config: RunnableConfig) -> Command[Literal["researcher", "compress_research"]]:
     """Execute tools called by the researcher, including search tools and strategic thinking.
@@ -509,11 +521,12 @@ async def researcher_tools(state: ResearcherState, config: RunnableConfig) -> Co
     )
 
 async def compress_research(state: ResearcherState, config: RunnableConfig):
-    """Compress and synthesize research findings into a concise, structured summary.
+    """Compress and synthesize research findings, then embed them into the vector store.
     
     This function takes all the research findings, tool outputs, and AI messages from
     a researcher's work and distills them into a clean, comprehensive summary while
-    preserving all important information and findings.
+    preserving all important information and findings. After compression, it chunks
+    and embeds the findings into the vector store for later retrieval.
     
     Args:
         state: Current researcher state with accumulated research messages
@@ -540,6 +553,8 @@ async def compress_research(state: ResearcherState, config: RunnableConfig):
     # Step 3: Attempt compression with retry logic for token limit issues
     synthesis_attempts = 0
     max_attempts = 3
+    compressed_research = None
+    raw_notes_content = None
     
     while synthesis_attempts < max_attempts:
         try:
@@ -556,11 +571,8 @@ async def compress_research(state: ResearcherState, config: RunnableConfig):
                 for message in filter_messages(researcher_messages, include_types=["tool", "ai"])
             ])
             
-            # Return successful compression result
-            return {
-                "compressed_research": str(response.content),
-                "raw_notes": [raw_notes_content]
-            }
+            compressed_research = str(response.content)
+            break
             
         except Exception as e:
             synthesis_attempts += 1
@@ -573,14 +585,67 @@ async def compress_research(state: ResearcherState, config: RunnableConfig):
             # For other errors, continue retrying
             continue
     
-    # Step 4: Return error result if all attempts failed
-    raw_notes_content = "\n".join([
-        str(message.content) 
-        for message in filter_messages(researcher_messages, include_types=["tool", "ai"])
-    ])
+    # Step 4: Handle compression failure
+    if compressed_research is None:
+        raw_notes_content = "\n".join([
+            str(message.content) 
+            for message in filter_messages(researcher_messages, include_types=["tool", "ai"])
+        ])
+        compressed_research = "Error synthesizing research report: Maximum retries exceeded"
     
+    # Step 5: Embed the compressed research into the vector store
+    research_topic = state.get("research_topic", "Unknown Research Topic")
+    
+    # Combine compressed research and raw notes for embedding
+    full_research_text = f"# Research Topic: {research_topic}\n\n## Compressed Findings\n\n{compressed_research}\n\n## Raw Notes\n\n{raw_notes_content}"
+    
+    # Create a simple page_info structure for the chunking function
+    page_info = [{
+        "page_number": 1,
+        "text": full_research_text,
+        "start_char": 0,
+        "end_char": len(full_research_text)
+    }]
+    
+    # Configure chunking parameters
+    chunk_size = 512  # tokens per chunk
+    chunk_overlap = 100  # token overlap for context continuity
+    
+    # Generate chunks
+    chunks = chunk_text(
+        text=full_research_text,
+        page_info=page_info,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap
+    )
+    
+    # Step 6: Convert chunks to LangChain Document objects and add to vector store
+    document_objects = []
+    for chunk in chunks:
+        doc = Document(
+            page_content=chunk["chunk_text"],
+            metadata={
+                "research_session_id": str(uuid.uuid4()),
+                "source": "research_findings",
+                "chunk_type": "compressed_research",
+                "chunk_index": chunk.get("chunk_index"),
+                "start_char": chunk.get("start_char"),
+                "end_char": chunk.get("end_char"),
+                "token_count": chunk.get("token_count"),
+                "page_number": chunk.get("page_number"),
+                "research_topic": research_topic,
+                "total_chunks": len(chunks),
+            },
+        )
+        document_objects.append(doc)
+    
+    # Step 7: Add documents to vector store
+    if document_objects:
+        research_vector_store.add_documents(documents=document_objects)
+    
+    # Step 8: Return compression result
     return {
-        "compressed_research": "Error synthesizing research report: Maximum retries exceeded",
+        "compressed_research": compressed_research,
         "raw_notes": [raw_notes_content]
     }
 
@@ -619,8 +684,18 @@ async def final_report_generation(state: AgentState, config: RunnableConfig):
     """
     # Step 1: Extract research findings and prepare state cleanup
     notes = state.get("notes", [])
+    report_section_sketches = state.get("report_section_sketches", [])
     cleared_state = {"notes": {"type": "override", "value": []}}
     findings = "\n".join(notes)
+    
+    # Clean and format report section sketches: remove duplicates and convert to text
+    if report_section_sketches:
+        # Remove duplicates while preserving order
+        unique_sketches = list(dict.fromkeys(report_section_sketches))
+        # Convert list to valid text format (join with double newlines for readability)
+        report_section_sketches_text = "\n\n".join(unique_sketches)
+    else:
+        report_section_sketches_text = ""
     
     # Step 2: Configure the final report generation model
     configurable = Configuration.from_runnable_config(config)
@@ -640,9 +715,8 @@ async def final_report_generation(state: AgentState, config: RunnableConfig):
         try:
             # Create comprehensive prompt with all research context
             final_report_prompt = final_report_generation_prompt.format(
-                research_brief=state.get("research_brief", ""),
-                messages=get_buffer_string(state.get("messages", [])),
-                findings=findings,
+                report_plan=state.get("report_plan", ""),
+                section_sketches=report_section_sketches_text,
                 date=get_today_str()
             )
             
@@ -697,22 +771,26 @@ async def final_report_generation(state: AgentState, config: RunnableConfig):
     }
 
 # Main Deep Researcher Graph Construction
-# Creates the complete deep research workflow from user input to final report
+# Creates the complete deep research workflow from user input to embedded research
 deep_researcher_builder = StateGraph(
     AgentState, 
     input=AgentInputState, 
-    config_schema=Configuration
+    config_schema=Configuration,
 )
 
 # Add main workflow nodes for the complete research process
 deep_researcher_builder.add_node("clarify_with_user", clarify_with_user)           # User clarification phase
 deep_researcher_builder.add_node("write_research_brief", write_research_brief)     # Research planning phase
 deep_researcher_builder.add_node("research_supervisor", supervisor_subgraph)       # Research execution phase
+deep_researcher_builder.add_node("write_report_plan", write_report_plan)           # Report planning phase
+deep_researcher_builder.add_node("report_supervisor", report_supervisor_subgraph)   # Report execution phase
 deep_researcher_builder.add_node("final_report_generation", final_report_generation)  # Report generation phase
 
 # Define main workflow edges for sequential execution
 deep_researcher_builder.add_edge(START, "clarify_with_user")                       # Entry point
-deep_researcher_builder.add_edge("research_supervisor", "final_report_generation") # Research to report
+deep_researcher_builder.add_edge("research_supervisor", "write_report_plan")       # Research to report planning
+deep_researcher_builder.add_edge("write_report_plan", "report_supervisor")       # Report planning to report execution
+deep_researcher_builder.add_edge("report_supervisor", "final_report_generation")   # Report execution to report generation
 deep_researcher_builder.add_edge("final_report_generation", END)                   # Final exit point
 
 # Compile the complete deep researcher workflow
