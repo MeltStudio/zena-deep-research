@@ -1,66 +1,88 @@
-# Open Deep Research Repository Overview
+# CLAUDE.md
 
-## Project Description
-Open Deep Research is a configurable, fully open-source deep research agent that works across multiple model providers, search tools, and MCP (Model Context Protocol) servers. It enables automated research with parallel processing and comprehensive report generation.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Repository Structure
+## Project Overview
 
-### Root Directory
-- `README.md` - Comprehensive project documentation with quickstart guide
-- `pyproject.toml` - Python project configuration and dependencies
-- `langgraph.json` - LangGraph configuration defining the main graph entry point
-- `uv.lock` - UV package manager lock file
-- `LICENSE` - MIT license
-- `.env.example` - Environment variables template (not tracked)
-
-### Core Implementation (`src/open_deep_research/`)
-- `deep_researcher.py` - Main LangGraph implementation (entry point: `deep_researcher`)
-- `configuration.py` - Configuration management and settings
-- `state.py` - Graph state definitions and data structures  
-- `prompts.py` - System prompts and prompt templates
-- `utils.py` - Utility functions and helpers
-- `files/` - Research output and example files
-
-### Legacy Implementations (`src/legacy/`)
-Contains two earlier research implementations:
-- `graph.py` - Plan-and-execute workflow with human-in-the-loop
-- `multi_agent.py` - Supervisor-researcher multi-agent architecture
-- `legacy.md` - Documentation for legacy implementations
-- `CLAUDE.md` - Legacy-specific Claude instructions
-- `tests/` - Legacy-specific tests
-
-### Security (`src/security/`)
-- `auth.py` - Authentication handler for LangGraph deployment
-
-### Testing (`tests/`)
-- `run_evaluate.py` - Main evaluation script configured to run on deep research bench
-- `evaluators.py` - Specialized evaluation functions  
-- `prompts.py` - Evaluation prompts and criteria
-- `pairwise_evaluation.py` - Comparative evaluation tools
-- `supervisor_parallel_evaluation.py` - Multi-threaded evaluation
-
-### Examples (`examples/`)
-- `arxiv.md` - ArXiv research example
-- `pubmed.md` - PubMed research example
-- `inference-market.md` - Inference market analysis examples
-
-## Key Technologies
-- **LangGraph** - Workflow orchestration and graph execution
-- **LangChain** - LLM integration and tool calling
-- **Multiple LLM Providers** - OpenAI, Anthropic, Google, Groq, DeepSeek support
-- **Search APIs** - Tavily, OpenAI/Anthropic native search, DuckDuckGo, Exa
-- **MCP Servers** - Model Context Protocol for extended capabilities
+Open Deep Research is a configurable deep research agent built on LangGraph that conducts automated research with parallel processing and generates comprehensive reports. It supports multiple LLM providers (OpenAI, Anthropic, Google, Groq, DeepSeek), search APIs (Tavily, native Anthropic/OpenAI web search), and MCP servers.
 
 ## Development Commands
-- `uvx langgraph dev` - Start development server with LangGraph Studio
-- `python tests/run_evaluate.py` - Run comprehensive evaluations
-- `ruff check` - Code linting
-- `mypy` - Type checking
 
-## Configuration
-All settings configurable via:
-- Environment variables (`.env` file)
-- Web UI in LangGraph Studio
-- Direct configuration modification
+```bash
+# Start development server with LangGraph Studio
+uvx --refresh --from "langgraph-cli[inmem]" --with-editable . --python 3.11 langgraph dev --allow-blocking
 
-Key settings include model selection, search API choice, concurrency limits, and MCP server configurations.
+# Run evaluations against Deep Research Bench (costs ~$20-$100)
+python tests/run_evaluate.py
+
+# Linting and type checking
+ruff check src/
+mypy src/
+
+# Install dependencies
+uv sync
+```
+
+## Architecture
+
+### Main Graph (`src/open_deep_research/deep_researcher.py`)
+
+The agent uses a hierarchical LangGraph structure with three compiled subgraphs:
+
+```
+deep_researcher (main graph)
+├── clarify_with_user → Optional clarification phase
+├── write_research_brief → Transforms user input into research brief
+├── research_supervisor (subgraph) → Manages research delegation
+│   ├── supervisor → Plans research strategy, uses ConductResearch/ResearchComplete tools
+│   └── supervisor_tools → Executes tool calls, spawns researcher subgraphs
+└── final_report_generation → Synthesizes all findings into report
+```
+
+**Researcher Subgraph** (spawned in parallel by supervisor):
+```
+researcher_subgraph
+├── researcher → Conducts focused research using search/MCP tools
+├── researcher_tools → Executes search queries
+└── compress_research → Summarizes findings before returning to supervisor
+```
+
+### State Flow
+
+- `AgentState` → Main graph state (messages, research_brief, notes, final_report)
+- `SupervisorState` → Supervisor subgraph state (supervisor_messages, research_iterations)
+- `ResearcherState` → Individual researcher state (researcher_messages, tool_call_iterations)
+
+The `override_reducer` in `state.py` allows state values to be either appended or completely replaced using `{"type": "override", "value": ...}`.
+
+### Key Configuration Fields (`src/open_deep_research/configuration.py`)
+
+All configurable via environment variables (UPPERCASE) or LangGraph Studio UI:
+- `search_api`: tavily, openai, anthropic, or none
+- `research_model`, `compression_model`, `final_report_model`: Model selection per task
+- `max_concurrent_research_units`: Parallel research tasks (default: 5)
+- `max_researcher_iterations`: Supervisor reflection loops (default: 6)
+- `max_react_tool_calls`: Tool calls per researcher (default: 10)
+
+### Tools System (`src/open_deep_research/utils.py`)
+
+Tools are assembled dynamically in `get_all_tools()`:
+1. Core tools: `ResearchComplete`, `think_tool`, `search_internal_documents`
+2. Search tool based on `search_api` config
+3. MCP tools if configured
+
+The `tavily_search` tool includes automatic summarization of webpage content using the summarization model.
+
+## Environment Variables
+
+Required (copy from `.env.example`):
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` - Model provider keys
+- `TAVILY_API_KEY` - For Tavily search
+- `LANGSMITH_API_KEY` - For tracing and evaluation
+
+## Testing & Evaluation
+
+The `tests/` directory contains evaluation infrastructure for Deep Research Bench:
+- `run_evaluate.py` - Main entry point, configures models and runs against LangSmith dataset
+- `evaluators.py` - Quality, relevance, structure, correctness, groundedness, completeness evaluators
+- `extract_langsmith_data.py` - Exports results to JSONL for benchmark submission
