@@ -20,7 +20,7 @@ from langchain_core.runnables import RunnableConfig
 from open_deep_research.chunks import chunk_text
 
 # Import vector store and search tool
-from open_deep_research.deep_researcher import research_vector_store
+from open_deep_research.vector_store import get_research_findings_store
 from open_deep_research.utils import search_research_findings
 
 
@@ -99,10 +99,11 @@ def simulate_compress_research(content: str, research_topic: str) -> list[Docume
     return document_objects
 
 
-def add_documents_to_store(documents: list[Document]) -> None:
+async def add_documents_to_store(documents: list[Document]) -> None:
     """Add documents to the research vector store."""
     if documents:
-        document_ids = research_vector_store.add_documents(documents=documents)
+        research_findings_store = await get_research_findings_store()
+        document_ids = await research_findings_store.aadd_documents(documents=documents)
         print(f"\n✅ Added {len(documents)} chunks to vector store")
         print(f"   Document IDs: {document_ids[:3]}..." if len(document_ids) > 3 else f"   Document IDs: {document_ids}")
     else:
@@ -172,7 +173,7 @@ async def main():
     
     # Step 3: Add documents to vector store
     print("\n📥 STEP 3: Adding documents to vector store")
-    add_documents_to_store(documents)
+    await add_documents_to_store(documents)
     
     # Step 4: Create configuration for search
     print("\n⚙️ STEP 4: Creating configuration")

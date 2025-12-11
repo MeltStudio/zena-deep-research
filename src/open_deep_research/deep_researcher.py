@@ -58,23 +58,16 @@ from open_deep_research.utils import (
 )
 from open_deep_research.chunks import chunk_text
 from langchain_core.documents import Document
-from open_deep_research.vector_store import (
-    research_findings_store,
-    research_findings_retriever,
-)
+from open_deep_research.vector_store import get_research_findings_store
 
 # Import ingest_documents to ensure internal documents are loaded on startup
 # This ensures PDFs are processed and added to the vector store when langgraph dev starts
-import open_deep_research.ingest_documents  # noqa: F401
+import open_deep_research.ingest_initial_documents  # noqa: F401
 
 # Initialize a configurable model that we will use throughout the agent
 configurable_model = init_chat_model(
     configurable_fields=("model", "max_tokens", "api_key"),
 )
-
-# Re-export for backward compatibility with utils.py and tests
-research_vector_store = research_findings_store
-research_retriever = research_findings_retriever
 
 
 async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Command[Literal["write_research_brief", "__end__"]]:
@@ -641,7 +634,8 @@ async def compress_research(state: ResearcherState, config: RunnableConfig):
     
     # Step 7: Add documents to vector store
     if document_objects:
-        research_vector_store.add_documents(documents=document_objects)
+        research_findings_store = await get_research_findings_store()
+        await research_findings_store.aadd_documents(documents=document_objects)
     
     # Step 8: Return compression result
     return {

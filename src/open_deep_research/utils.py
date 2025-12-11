@@ -32,19 +32,11 @@ from tavily import AsyncTavilyClient
 
 from open_deep_research.configuration import Configuration, SearchAPI
 from open_deep_research.vector_store import (
-    internal_documents_retriever,
-    research_findings_retriever,
-    research_findings_store,
+    get_internal_documents_store,
+    get_research_findings_store,
 )
 from open_deep_research.prompts import summarize_webpage_prompt, summarize_internal_document_prompt
 from open_deep_research.state import ResearchComplete, Summary
-
-# Re-export for backward compatibility
-retriever = internal_documents_retriever
-
-def get_research_retriever():
-    """Get the research findings retriever from the unified vector store."""
-    return research_findings_retriever
 
 ##########################
 # Citation Parsing Utils
@@ -835,15 +827,18 @@ async def search_internal_documents(
     Returns:
         Formatted string containing summarized search results from all queries
     """
-    # Step 1: Execute all search queries asynchronously in parallel
+    # Step 1: Get the vector store
+    internal_documents_store = await get_internal_documents_store()
+    
+    # Step 2: Execute all search queries asynchronously in parallel
     search_tasks = [
-        retriever.ainvoke(query)
+        internal_documents_store.asimilarity_search(query)
         for query in queries
     ]
     
     all_results = await asyncio.gather(*search_tasks)
     
-    # Step 2: Deduplicate results by source_id to avoid processing the same content multiple times
+    # Step 3: Deduplicate results by source_id to avoid processing the same content multiple times
     unique_results = {}
     for query, results in zip(queries, all_results):
         for doc in results:
@@ -862,199 +857,9 @@ async def search_internal_documents(
                     "chunk_idx": chunk_idx
                 }
     
-    # Step 3: Check if we have results
-    if not unique_results:
-        return "No relevant documents found. Please try different search queries."
-    
-    # Step 4: Set up the summarization model with configuration
-    configurable = Configuration.from_runnable_config(config)
-    
-    # Character limit to stay within model token limits (configurable)
-    max_char_to_include = configurable.max_content_length
-    
-    # Initialize summarization model with retry logic
-    model_api_key = get_api_key_for_model(configurable.summarization_model, config)
-    summarization_model = init_chat_model(
-        model=configurable.summarization_model,
-        max_tokens=configurable.summarization_model_max_tokens,
-        api_key=model_api_key,
-        tags=["langsmith:nostream"]
-    ).with_structured_output(Summary).with_retry(
-        stop_after_attempt=configurable.max_structured_output_retries
-    )
-    
-    # Step 5: Create summarization tasks (skip empty content)
-    async def noop():
-        """No-op function for results without content."""
-        return None
-    
-    summarization_tasks = [
-        noop() if not result["doc"].page_content 
-        else summarize_internal_document(
-            summarization_model, 
-            result["doc"].page_content[:max_char_to_include]
-        )
-        for result in unique_results.values()
-    ]
-    
-    # Step 6: Execute all summarization tasks in parallel
-    summaries = await asyncio.gather(*summarization_tasks)
-    
-    # Step 7: Combine results with their summaries
-    summarized_results = {
-        source_id: {
-            'filename': result['filename'],
-            'page_num': result['page_num'],
-            'chunk_idx': result['chunk_idx'],
-            'query': result['query'],
-            'content': result['doc'].page_content if summary is None else summary
-        }
-        for source_id, result, summary in zip(
-            unique_results.keys(), 
-            unique_results.values(), 
-            summaries
-        )
-    }
-    
-    # Step 8: Format the final output
-    formatted_output = "Search results from internal documents: \n\n"
-    for i, (source_id, result) in enumerate(summarized_results.items()):
-        formatted_output += f"\n\n--- SOURCE {i+1}: [{result['filename']}] ---\n"
-        formatted_output += f"URL/ID: {source_id}\n"
-        formatted_output += f"PAGE: {result['page_num']}\n"
-        formatted_output += f"QUERY: {result['query']}\n\n"
-        formatted_output += f"SUMMARY:\n{result['content']}\n\n"
-        formatted_output += "\n\n" + "-" * 80 + "\n"
-    
-    return formatted_output
-
-def get_research_vector_store():
-    """Get the research findings vector store from the unified vector store module."""
-    return research_findings_store
-
-
-def lookup_citation_sources(
-    research_session_id: str,
-    citation_numbers: List[int]
-) -> Dict[int, str]:
-    """Look up citation sources from Chroma vector store by session ID and citation numbers.
-    
-    Args:
-        research_session_id: The unique session ID linking findings to sources
-        citation_numbers: List of citation numbers to look up
-        
-    Returns:
-        Dictionary mapping citation number to full citation string
-    """
-    if not citation_numbers:
-        return {}
-    
-    try:
-        vector_store = get_research_vector_store()
-        sources_found = {}
-        
-        # Use Chroma's get() method with metadata filtering
-        # Query for citation_source documents from this session
-        results = vector_store.get(
-            where={
-                "$and": [
-                    {"chunk_type": {"$eq": "citation_source"}},
-                    {"research_session_id": {"$eq": str(research_session_id)}}
-                ]
-            }
-        )
-        
-        # Process results if any documents were found
-        if results and results.get("documents"):
-            documents = results.get("documents", [])
-            metadatas = results.get("metadatas", [])
-            
-            for doc_content, metadata in zip(documents, metadatas):
-                if metadata:
-                    cit_num = metadata.get("citation_number")
-                    if cit_num in citation_numbers:
-                        sources_found[cit_num] = doc_content
-        
-        return sources_found
-        
-    except Exception as e:
-        logging.warning(f"Error looking up citation sources: {e}")
-        return {}
-
-
-@tool(description="Search for relevant information from previously embedded research findings")
-async def search_research_findings(
-    queries: List[str],
-    config: RunnableConfig = None
-) -> str:
-    """This tool is used to search for relevant information from previously embedded research findings.
-
-    Use this tool to search through research that has already been completed.
-    This allows you to retrieve information from past research sessions.
-    Citation sources are automatically looked up and appended to findings.
-    
-    Args:
-        queries: List of search queries to execute against embedded research findings
-        config: Runtime configuration for API keys and model settings
-        
-    Returns:
-        Formatted string containing summarized search results with their citation sources
-    """
-    # Step 1: Get the research retriever
-    try:
-        research_retriever_instance = get_research_retriever()
-        # Add debug logging for Chroma
-        vector_store = get_research_vector_store()
-        try:
-            # Get collection count from Chroma
-            collection = vector_store._collection
-            doc_count = collection.count() if collection else 0
-        except Exception:
-            pass
-    except Exception as e:
-        return f"Error accessing research findings: {str(e)}. Research findings may not be available yet."
-    
-    # Step 2: Execute all search queries asynchronously in parallel
-    search_tasks = [
-        research_retriever_instance.ainvoke(query)
-        for query in queries
-    ]
-    
-    try:
-        all_results = await asyncio.gather(*search_tasks)
-    except Exception as e:
-        return f"Error searching research findings: {str(e)}"
-    
-    # Step 3: Deduplicate results and filter to only findings (not sources)
-    unique_results = {}
-    for query, results in zip(queries, all_results):
-        for doc in results:
-            chunk_type = doc.metadata.get("chunk_type", "Unknown")
-            
-            # Skip citation_source documents - we only want findings
-            if chunk_type == "citation_source":
-                continue
-            
-            chunk_idx = doc.metadata.get("chunk_index", "N/A")
-            research_session_id = doc.metadata.get("research_session_id", "")
-            source_id = f"{chunk_type}-chunk{chunk_idx}-{research_session_id[:8]}"
-            
-            # Only keep the first occurrence of each source
-            if source_id not in unique_results:
-                unique_results[source_id] = {
-                    "doc": doc,
-                    "query": query,
-                    "chunk_type": chunk_type,
-                    "chunk_idx": chunk_idx,
-                    "research_topic": doc.metadata.get("research_topic", "N/A"),
-                    "research_session_id": research_session_id,
-                    "citation_numbers": doc.metadata.get("citation_numbers", []),
-                    "total_chunks": doc.metadata.get("total_chunks", "N/A")
-                }
-    
     # Step 4: Check if we have results
     if not unique_results:
-        return "No relevant research findings found. The research findings database may be empty or your queries may not match any embedded content."
+        return "No relevant documents found. Please try different search queries."
     
     # Step 5: Set up the summarization model with configuration
     configurable = Configuration.from_runnable_config(config)
@@ -1090,7 +895,208 @@ async def search_research_findings(
     # Step 7: Execute all summarization tasks in parallel
     summaries = await asyncio.gather(*summarization_tasks)
     
-    # Step 8: Combine results with their summaries and lookup citation sources
+    # Step 8: Combine results with their summaries
+    summarized_results = {
+        source_id: {
+            'filename': result['filename'],
+            'page_num': result['page_num'],
+            'chunk_idx': result['chunk_idx'],
+            'query': result['query'],
+            'content': result['doc'].page_content if summary is None else summary
+        }
+        for source_id, result, summary in zip(
+            unique_results.keys(), 
+            unique_results.values(), 
+            summaries
+        )
+    }
+    
+    # Step 9: Format the final output
+    formatted_output = "Search results from internal documents: \n\n"
+    for i, (source_id, result) in enumerate(summarized_results.items()):
+        formatted_output += f"\n\n--- SOURCE {i+1}: [{result['filename']}] ---\n"
+        formatted_output += f"URL/ID: {source_id}\n"
+        formatted_output += f"PAGE: {result['page_num']}\n"
+        formatted_output += f"QUERY: {result['query']}\n\n"
+        formatted_output += f"SUMMARY:\n{result['content']}\n\n"
+        formatted_output += "\n\n" + "-" * 80 + "\n"
+    
+    return formatted_output
+
+
+def lookup_citation_sources(
+    research_session_id: str,
+    citation_numbers: List[int]
+) -> Dict[int, str]:
+    """Look up citation sources from PostgreSQL pgvector store by session ID and citation numbers.
+    
+    Args:
+        research_session_id: The unique session ID linking findings to sources
+        citation_numbers: List of citation numbers to look up
+        
+    Returns:
+        Dictionary mapping citation number to full citation string
+    """
+    if not citation_numbers:
+        return {}
+    
+    try:
+        import os
+        import psycopg2
+        from urllib.parse import urlparse
+        from dotenv import load_dotenv
+        
+        load_dotenv()
+        sources_found = {}
+        
+        # Get connection string from environment or use default
+        connection_string = os.getenv(
+            "POSTGRES_CONNECTION_STRING",
+            "postgresql://postgres:postgres@localhost:5432/vectorstore"
+        )
+        parsed = urlparse(connection_string)
+        
+        conn = psycopg2.connect(
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 5432,
+            database=parsed.path.lstrip('/') or "vectorstore",
+            user=parsed.username or "postgres",
+            password=parsed.password or "postgres"
+        )
+        
+        cursor = conn.cursor()
+        
+        # Query for citation_source documents matching session ID and citation numbers
+        # Use parameterized query to prevent SQL injection
+        citation_placeholders = ','.join(['%s'] * len(citation_numbers))
+        query = f"""
+            SELECT page_content, metadata
+            FROM research_findings
+            WHERE metadata->>'chunk_type' = 'citation_source'
+            AND metadata->>'research_session_id' = %s
+            AND (metadata->>'citation_number')::int IN ({citation_placeholders})
+        """
+        
+        cursor.execute(query, [str(research_session_id)] + citation_numbers)
+        results = cursor.fetchall()
+        
+        for page_content, metadata_json in results:
+            if metadata_json:
+                import json
+                # PGVector stores metadata as JSONB, which psycopg2 returns as dict
+                metadata = metadata_json if isinstance(metadata_json, dict) else json.loads(metadata_json)
+                cit_num = metadata.get("citation_number")
+                if cit_num and cit_num in citation_numbers:
+                    sources_found[cit_num] = page_content
+        
+        cursor.close()
+        conn.close()
+        
+        return sources_found
+        
+    except Exception as e:
+        logging.warning(f"Error looking up citation sources: {e}")
+        return {}
+
+
+@tool(description="Search for relevant information from previously embedded research findings")
+async def search_research_findings(
+    queries: List[str],
+    config: RunnableConfig = None
+) -> str:
+    """This tool is used to search for relevant information from previously embedded research findings.
+
+    Use this tool to search through research that has already been completed.
+    This allows you to retrieve information from past research sessions.
+    Citation sources are automatically looked up and appended to findings.
+    
+    Args:
+        queries: List of search queries to execute against embedded research findings
+        config: Runtime configuration for API keys and model settings
+        
+    Returns:
+        Formatted string containing summarized search results with their citation sources
+    """
+    # Step 2: Get the vector store
+    research_findings_store = await get_research_findings_store()
+    
+    # Step 3: Execute all search queries asynchronously in parallel
+    search_tasks = [
+        research_findings_store.asimilarity_search(query)
+        for query in queries
+    ]
+    
+    try:
+        all_results = await asyncio.gather(*search_tasks)
+    except Exception as e:
+        return f"Error searching research findings: {str(e)}"
+    
+    # Step 4: Deduplicate results and filter to only findings (not sources)
+    unique_results = {}
+    for query, results in zip(queries, all_results):
+        for doc in results:
+            chunk_type = doc.metadata.get("chunk_type", "Unknown")
+            
+            # Skip citation_source documents - we only want findings
+            if chunk_type == "citation_source":
+                continue
+            
+            chunk_idx = doc.metadata.get("chunk_index", "N/A")
+            research_session_id = doc.metadata.get("research_session_id", "")
+            source_id = f"{chunk_type}-chunk{chunk_idx}-{research_session_id[:8]}"
+            
+            # Only keep the first occurrence of each source
+            if source_id not in unique_results:
+                unique_results[source_id] = {
+                    "doc": doc,
+                    "query": query,
+                    "chunk_type": chunk_type,
+                    "chunk_idx": chunk_idx,
+                    "research_topic": doc.metadata.get("research_topic", "N/A"),
+                    "research_session_id": research_session_id,
+                    "citation_numbers": doc.metadata.get("citation_numbers", []),
+                    "total_chunks": doc.metadata.get("total_chunks", "N/A")
+                }
+    
+    # Step 5: Check if we have results
+    if not unique_results:
+        return "No relevant research findings found. The research findings database may be empty or your queries may not match any embedded content."
+    
+    # Step 6: Set up the summarization model with configuration
+    configurable = Configuration.from_runnable_config(config)
+    
+    # Character limit to stay within model token limits (configurable)
+    max_char_to_include = configurable.max_content_length
+    
+    # Initialize summarization model with retry logic
+    model_api_key = get_api_key_for_model(configurable.summarization_model, config)
+    summarization_model = init_chat_model(
+        model=configurable.summarization_model,
+        max_tokens=configurable.summarization_model_max_tokens,
+        api_key=model_api_key,
+        tags=["langsmith:nostream"]
+    ).with_structured_output(Summary).with_retry(
+        stop_after_attempt=configurable.max_structured_output_retries
+    )
+    
+    # Step 7: Create summarization tasks (skip empty content)
+    async def noop():
+        """No-op function for results without content."""
+        return None
+    
+    summarization_tasks = [
+        noop() if not result["doc"].page_content 
+        else summarize_internal_document(
+            summarization_model, 
+            result["doc"].page_content[:max_char_to_include]
+        )
+        for result in unique_results.values()
+    ]
+    
+    # Step 8: Execute all summarization tasks in parallel
+    summaries = await asyncio.gather(*summarization_tasks)
+    
+    # Step 9: Combine results with their summaries and lookup citation sources
     summarized_results = {}
     for (source_id, result), summary in zip(unique_results.items(), summaries):
         # Look up citation sources for this finding
@@ -1113,7 +1119,7 @@ async def search_research_findings(
             'content': result['doc'].page_content if summary is None else summary
         }
     
-    # Step 9: Format the final output with citation sources
+    # Step 10: Format the final output with citation sources
     formatted_output = "Search results from embedded research findings: \n\n"
     for i, (source_id, result) in enumerate(summarized_results.items()):
         formatted_output += f"\n\n--- RESEARCH FINDING {i+1}: [{result['chunk_type']}] ---\n"
@@ -1424,7 +1430,7 @@ def get_config_value(value):
     else:
         return value.value
 
-def get_api_key_for_model(model_name: str, config: RunnableConfig):
+def get_api_key_for_model(model_name: str, config: Optional[RunnableConfig] = None):
     """Get API key for a specific model from environment or config."""
     should_get_from_config = os.getenv("GET_API_KEYS_FROM_CONFIG", "false")
     model_name = model_name.lower()

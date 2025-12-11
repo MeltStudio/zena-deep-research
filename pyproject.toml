@@ -48,6 +48,8 @@ dependencies = [
     "chonkie>=1.4.2",
     "langchain-chroma>=0.2.6",
     "docling>=2.64.1",
+    "psycopg2>=2.9.11",
+    "langchain-postgres>=0.0.16",
 ]
 
 [project.optional-dependencies]

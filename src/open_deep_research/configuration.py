@@ -351,6 +351,27 @@ class Configuration(BaseModel):
             }
         }
     )
+    # Document Ingestion Configuration
+    document_ingestion_model: str = Field(
+        default="openai:gpt-5-nano-2025-08-07",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "openai:gpt-5-nano-2025-08-07",
+                "description": "Model for images descriptions in the documents, the models needs to be available to input images"
+            }
+        }
+    )
+    document_ingestion_model_max_tokens: int = Field(
+        default=10000,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "number",
+                "default": 10000,
+                "description": "Maximum output tokens for document ingestion model"
+            }
+        }
+    )
 
 
     @classmethod
