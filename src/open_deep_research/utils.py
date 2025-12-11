@@ -832,7 +832,7 @@ async def search_internal_documents(
     
     # Step 2: Execute all search queries asynchronously in parallel
     search_tasks = [
-        internal_documents_store.asimilarity_search(query)
+        internal_documents_store.asimilarity_search(query, k=5)
         for query in queries
     ]
     
@@ -843,9 +843,9 @@ async def search_internal_documents(
     for query, results in zip(queries, all_results):
         for doc in results:
             filename = doc.metadata.get("filename", "Unknown")
-            page_num = doc.metadata.get("page_number", "N/A")
-            chunk_idx = doc.metadata.get("chunk_index", "N/A")
-            source_id = f"{filename}-page{page_num}-chunk{chunk_idx}"
+            page_no = doc.metadata.get("page_no", "N/A")
+            headings = doc.metadata.get("headings", [])
+            source_id = f"{filename}-page{page_no}-headings: {','.join(headings)}"
             
             # Only keep the first occurrence of each source
             if source_id not in unique_results:
@@ -853,8 +853,8 @@ async def search_internal_documents(
                     "doc": doc,
                     "query": query,
                     "filename": filename,
-                    "page_num": page_num,
-                    "chunk_idx": chunk_idx
+                    "page_no": page_no,
+                    "headings": headings
                 }
     
     # Step 4: Check if we have results
@@ -899,8 +899,8 @@ async def search_internal_documents(
     summarized_results = {
         source_id: {
             'filename': result['filename'],
-            'page_num': result['page_num'],
-            'chunk_idx': result['chunk_idx'],
+            'page_no': result['page_no'],
+            'headings': result['headings'],
             'query': result['query'],
             'content': result['doc'].page_content if summary is None else summary
         }
@@ -916,7 +916,8 @@ async def search_internal_documents(
     for i, (source_id, result) in enumerate(summarized_results.items()):
         formatted_output += f"\n\n--- SOURCE {i+1}: [{result['filename']}] ---\n"
         formatted_output += f"URL/ID: {source_id}\n"
-        formatted_output += f"PAGE: {result['page_num']}\n"
+        formatted_output += f"PAGE: {result['page_no']}\n"
+        formatted_output += f"HEADINGS: {result['headings']}\n"
         formatted_output += f"QUERY: {result['query']}\n\n"
         formatted_output += f"SUMMARY:\n{result['content']}\n\n"
         formatted_output += "\n\n" + "-" * 80 + "\n"

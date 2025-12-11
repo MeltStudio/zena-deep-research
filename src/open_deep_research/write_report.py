@@ -16,6 +16,7 @@ from langgraph.types import Command
 
 from open_deep_research.configuration import Configuration
 from open_deep_research.conts import documents_source1
+from open_deep_research.ingest_initial_documents import ingest_documents_to_store
 from open_deep_research.prompts import (
     compress_report_research_system_prompt,
     compress_research_simple_human_message,
@@ -35,6 +36,7 @@ from open_deep_research.state import (
 )
 from open_deep_research.utils import (
     execute_tool_safely,
+    get_all_tools,
     get_api_key_for_model,
     get_notes_from_tool_calls,
     get_today_str,
@@ -84,7 +86,8 @@ async def write_report_plan(
     )
 
     # Step 2: Get the research brief and report structure from state
-    research_brief = state.get("research_brief", "")
+    messages = state.get("messages", "")
+    research_brief = messages[-1].text
     #TODO: this its hardcoded for now, but we should make it dynamic based on the configuration.
     report_structure = documents_source1
 
@@ -95,7 +98,7 @@ async def write_report_plan(
         date=get_today_str(),
     )
 
-    response = await report_plan_model.ainvoke([HumanMessage(content=prompt_content)])
+    response = await report_plan_model.ainvoke([SystemMessage(content=prompt_content)])
 
     report_research_supervisor_system_prompt = report_research_supervisor_prompt.format(
         report_plan=response.report_plan,
@@ -196,9 +199,6 @@ async def report_supervisor_tools(
     supervisor_messages = state.get("report_supervisor_messages", [])
     research_iterations = state.get("report_research_iterations", 0)
     most_recent_message = supervisor_messages[-1]
-    
-    # Debug: Log current state
-    current_sketches = state.get("report_section_sketches", [])
 
     # Define exit criteria for report research phase
     exceeded_allowed_iterations = (
@@ -345,9 +345,9 @@ async def report_researcher(
 ) -> Command[Literal["report_researcher_tools"]]:
     """Individual researcher that conducts focused research on specific report sections.
 
-    This researcher is given a specific report section by the supervisor and uses
-    available tools (think_tool, search_research_findings) to gather comprehensive information.
-    It can use think_tool for strategic planning between searches and search_research_findings to search for relevant information from previously embedded research findings.
+    This researcher is given a specific research topic by the supervisor and uses
+    available tools (search, think_tool, search_internal_documents) to gather comprehensive information.
+    It can use think_tool for strategic planning between searches.
 
     Args:
         state: Current researcher state with messages and report section context
@@ -360,8 +360,13 @@ async def report_researcher(
     configurable = Configuration.from_runnable_config(config)
     report_researcher_messages = state.get("report_researcher_messages", [])
 
-    # Get all available report researcher tools (think_tool, search_research_findings)
-    tools = [think_tool, search_research_findings]
+    # Get all available report researcher tools (think_tool, search, MCP tools)
+    tools = await get_all_tools(config)
+    if len(tools) == 0:
+        raise ValueError(
+            "No tools found to conduct report research: Please configure either your "
+            "search API or add MCP tools to your configuration."
+        )
 
     # Step 2: Configure the researcher model with tools
     report_researcher_model_config = {
@@ -422,10 +427,11 @@ async def report_researcher_tools(
     if not has_tool_calls:
         return Command(goto="compress_report_research")
 
-    # Step 2: Handle tool calls
+    # Step 2: Handle tool calls - FIX: Get tools dynamically like in deep_researcher.py
+    tools = await get_all_tools(config)
     tools_by_name = {
-        "think_tool": think_tool,
-        "search_research_findings": search_research_findings,
+        tool.name if hasattr(tool, "name") else tool.get("name", "web_search"): tool 
+        for tool in tools
     }
 
     # Execute all tool calls in parallel

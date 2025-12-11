@@ -6,7 +6,7 @@ Mackenzie Branding Research Report
 3. Client Q & A
 4. Project Components
 A. Situation & Problem Statement
-B. Methodology & Sources(brief description)
+B. Methodology & Sources (brief description)
 C. Category Overview & Trends( includes channel, pricing, product, promotion/communications analyses)
 D. Consumer Profiles/Behaviors
 E. Market Opportunity Assessment
@@ -15,6 +15,4 @@ G. Brand Extension/Fit Matrix
 H. Concept Statements
 I. Executional Recommendations(optional/value-added)
 5. Risks
-6. Appendices
-7. Sources
 """

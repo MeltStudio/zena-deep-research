@@ -773,16 +773,16 @@ deep_researcher_builder = StateGraph(
 )
 
 # Add main workflow nodes for the complete research process
-deep_researcher_builder.add_node("clarify_with_user", clarify_with_user)           # User clarification phase
-deep_researcher_builder.add_node("write_research_brief", write_research_brief)     # Research planning phase
-deep_researcher_builder.add_node("research_supervisor", supervisor_subgraph)       # Research execution phase
+#deep_researcher_builder.add_node("clarify_with_user", clarify_with_user)           # User clarification phase
+#deep_researcher_builder.add_node("write_research_brief", write_research_brief)     # Research planning phase
+#deep_researcher_builder.add_node("research_supervisor", supervisor_subgraph)       # Research execution phase
 deep_researcher_builder.add_node("write_report_plan", write_report_plan)           # Report planning phase
 deep_researcher_builder.add_node("report_supervisor", report_supervisor_subgraph)   # Report execution phase
 deep_researcher_builder.add_node("final_report_generation", final_report_generation)  # Report generation phase
 
 # Define main workflow edges for sequential execution
-deep_researcher_builder.add_edge(START, "clarify_with_user")                       # Entry point
-deep_researcher_builder.add_edge("research_supervisor", "write_report_plan")       # Research to report planning
+deep_researcher_builder.add_edge(START, "write_report_plan")                       # Entry point
+#deep_researcher_builder.add_edge("research_supervisor", "write_report_plan")       # Research to report planning
 deep_researcher_builder.add_edge("write_report_plan", "report_supervisor")       # Report planning to report execution
 deep_researcher_builder.add_edge("report_supervisor", "final_report_generation")   # Report execution to report generation
 deep_researcher_builder.add_edge("final_report_generation", END)                   # Final exit point
