@@ -55,31 +55,15 @@ save_draft_restatement → [webhook: END | CLI: request_approval → save_restat
 - Webhook mode for API integration
 
 **Weaknesses:**
-- Feedback not passed to LLM on regeneration (TODO in code)
-- Context sources not persisted (only metadata summary)
 - No validation of required fields before LLM call
 - Possible orphaned draft records
 
-### Deep Research Patterns (for consideration)
+### Decisions Made
 
-**Clarification System** (currently disabled in deep-research):
-- Detects ambiguity in user input
-- Asks clarifying questions before proceeding
-- Structured output with `need_clarification`, `question`, `verification`
-- Avoids repeated questions by checking message history
-
-**Research Brief Transformation:**
-- Converts conversational input to focused research brief
-- Guidelines for maximizing specificity
-- First-person phrasing from user perspective
-
-### Questions to Discuss
-
-| Question | Options | Notes |
-|----------|---------|-------|
-| **Should we add clarification step?** | A) Yes - detect ambiguity before restatement<br>B) No - current form-based input is structured enough | Form input is already structured; clarification may add friction |
-| **Fix feedback loop bug?** | A) Yes - pass feedback to LLM on regeneration<br>B) Defer | This is a bug - feedback is stored but not used |
-| **Persist context sources?** | A) Yes - store document/chunk IDs used<br>B) No - current summary is sufficient | Helps audit trail but adds storage |
+| Question | Decision | Notes |
+|----------|----------|-------|
+| Add clarification step? | **No** | Form input is already structured; clarification not needed |
+| Persist context sources? | **No** | Current metadata summary is sufficient |
 
 ---
 
@@ -131,7 +115,7 @@ compress_report_research → write_report_section → final_report_generation
 - No strategic hypothesis or recommendations framework
 - No validation step
 - No user approval flow
-- Hardcoded report structure
+- Hardcoded report structure (should be dynamic from `report_types.json`)
 - No database persistence layer
 - No Celery/API integration
 
@@ -143,7 +127,7 @@ Merge strategic depth from spike with section-level planning from deep-research.
 Phase 1: Strategic Foundation (from spike)
 ├── load_context
 ├── analyze_research (USE PR #72: search_research_findings for relevant research)
-├── generate_strategic_hypothesis
+├── generate_strategic_hypothesis (USE PR #72: search_research_findings to retrieve relevant findings)
 └── establish_recommendations
 
 Phase 2: Section-Level Planning (NEW - from deep-research concepts)
@@ -162,13 +146,19 @@ Phase 3: Validation & Persistence (from spike)
 └── persist_plan
 ```
 
+### Decisions Made
+
+| Question | Decision | Notes |
+|----------|----------|-------|
+| Section sketches location? | **A) In strategic plan** | User can review/approve sketches before report generation |
+| Keep argumentative_flow separate? | **A) Keep both** | Maintain as separate field; use as prompt input during section generation |
+| Report structure source? | **`report_types.json`** | Each report type defines suggested sections; strategic plan can add/remove sections based on analysis |
+
 ### Questions to Discuss
 
 | Question | Options | Notes |
 |----------|---------|-------|
-| **Should section sketches be generated in strategic plan or report generation?** | A) In strategic plan (user can review/approve sketches)<br>B) In report generation (faster planning phase) | If A, user sees more detail before approving; if B, planning stays lightweight |
-| **Do we keep argumentative_flow as separate field or merge into section_plan?** | A) Keep both (backward compatibility)<br>B) Merge into section_plan | Current UI may depend on argumentative_flow structure |
-| **How to handle template customization?** | A) LLM generates sections from scratch<br>B) LLM customizes template sections<br>C) Hybrid (template base + LLM additions) | Trade-off between consistency and flexibility |
+| **How much can strategic plan modify template sections?** | A) Only customize content within template sections<br>B) Can add sections but not remove<br>C) Full flexibility (add/remove based on analysis) | Manuel leans toward C - strategic plan should be able to adapt structure to specific markets or user questions |
 
 ---
 
@@ -204,7 +194,7 @@ finalize_report → create_executive_summary → add_cover → regulatory_review
 - No section sketches - goes straight from plan to final content
 - No "Derives From" dependency awareness
 - No per-section depth levels
-- Refinement loop is basic (currently limited to 1 pass)
+- Refinement loop is **broken** (critical issue - needs fix in v2)
 
 #### zena-deep-research (LangGraph)
 
@@ -339,10 +329,12 @@ END
 
 | Interface | Question | Notes |
 |-----------|----------|-------|
-| **Restatement → Research** | Is `objectives` + `constraints` sufficient to guide research? | Research brief is generated from these; may need richer context |
-| **Restatement → Research** | Should `global_context` and `document_context` be passed? | Currently lost after restatement; could inform research |
-| **Research → Strategic Plan** | Is `ResearchSession.key_insights` enough or should we query `ResearchFindings` directly? | PR #72 enables vector search on findings |
-| **Research → Strategic Plan** | Are `contradictions` and `coverage_gaps` being used? | These are generated but may not influence planning |
+| **Restatement → Research** | Is `restatement_text` sufficient to guide research? | Research brief is generated from this field; `objectives`, `constraints`, `context_summary` also available |
+| **Restatement → Research** | Should `restatement_text` be enhanced? | Francisco suggests a richer summary; current text may be missing key context |
+| **Restatement → Research** | Should intake form be passed to research? | Research may benefit from seeing raw user questions directly, not just the restatement |
+| **Restatement → Research** | Should `global_context` be passed or scrapped entirely? | **⚠️ TEAM DISCUSSION NEEDED**: Francisco says not needed; Sebastián built this functionality. Need alignment on whether to keep, modify, or remove |
+| **Research → Strategic Plan** | ~~Is `ResearchSession.key_insights` enough?~~ | **DECIDED**: Query `ResearchFindings` dynamically via PR #72 vector search based on what information is needed in each step |
+| **Research → Strategic Plan** | Are `contradictions` and `coverage_gaps` being used? | Francisco says not needed; Manuel sees potential for user-facing conflict resolution. Keep open for debate |
 | **Strategic Plan → Report** | Is `section_plan` (v2) sufficient for section-level generation? | New artifact; needs to include all context per section |
 | **Strategic Plan → Report** | Should `recommendations_framework` map explicitly to sections? | Current mapping is implicit via argumentative_flow |
 | **All → All** | Should we have a shared "report context" object passed through? | Would ensure consistency but adds coupling |
