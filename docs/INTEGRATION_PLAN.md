@@ -4,6 +4,12 @@
 
 Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-workflow-spike and zena-deep-research implementations.
 
+## Cross-Cutting Requirements
+
+| Requirement | Notes |
+|-------------|-------|
+| **Langfuse Observability** | All workflow nodes must have `@observe()` decorator for tracing. This is already implemented across existing workflows - v2 must maintain this pattern. |
+
 ## Current Status
 
 | Workflow | Status | Notes |
@@ -346,5 +352,4 @@ END
 - **Reprocessing**: Batch job to reprocess v1 documents with v2 Docling pipeline
 - **MCP Integration**: Model Context Protocol servers for extended capabilities
 - **Report Templates**: Customizable report formats
-- **Workflow Observability**: Unified metrics across all workflows
 - **A/B Testing**: Compare v1 vs v2 output quality
