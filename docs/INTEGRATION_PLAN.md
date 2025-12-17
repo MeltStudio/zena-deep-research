@@ -320,9 +320,12 @@ Phase 3: Assembly & Validation (from spike, enhanced)
 ├── [conditional] refine_sections (targeted per-section refinement)
 └── finalize_report
 
-Phase 4: Polish & Persist (from spike)
-├── create_executive_summary
-├── add_cover
+Phase 4: Standard Sections & Persist (from spike)
+├── create_executive_summary (synthesizes all content sections)
+├── create_conclusions (synthesizes key findings)
+├── generate_bibliography (citation utility extracts all sources)
+├── generate_table_of_contents (from final structure)
+├── add_cover_page
 ├── regulatory_review (if applicable)
 └── save_report (DB + S3)
 ```
@@ -379,7 +382,7 @@ Standard sections are generated in Phase 4, AFTER all content sections are compl
 | Parallel execution limit? | **Fixed at 8, configurable** | Default to 8 concurrent section researchers; parameter comes from config for easy future adjustment |
 | Refinement scope? | **Per-section + consistency loop** | Regenerate problematic section(s), then run consistency check across all sections. If inconsistencies found, regenerate affected sections. Supports both per-section and report-level user feedback. |
 | Where to store section sketches? | **StrategicPlan table** | Store alongside existing `report_structure` field (proposed outline). User can see both outline and sketches when reviewing strategic plan. |
-| Should "Derives From" sections skip research? | **A) Yes - synthesize only** | Surface sections (Executive Summary, Conclusions) derive from existing report content. No additional research - just synthesize from referenced sections. |
+| Should "Derives From" content sections skip research? | **A) Yes - synthesize only** | Content sections with `derives_from[]` dependencies synthesize from their referenced sections. No additional research - just synthesize. (Note: Standard sections like Executive Summary and Conclusions are separate - they're generated in Phase 4 from the full report.) |
 | User approval for final report? | **Yes - with version history** | User can give feedback on individual sections and/or the full report. Feedback triggers targeted regeneration. Upon approval, report is marked as "final" which triggers downstream outputs (PowerPoint, PDF). Post-approval modifications create new versions (v2, v3, etc.) with full version history. Each version can be approved to regenerate outputs. |
 
 ---
