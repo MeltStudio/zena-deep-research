@@ -569,6 +569,77 @@ All workflows must be runnable from LangSmith/LangGraph Studio for development:
 
 ---
 
+## Implementation Handoff
+
+### Hybrid Approach
+
+The implementation is split between initial scaffolding (done) and integration/testing (Python team).
+
+#### Phase A: Initial Scaffolding (Complete)
+
+Done by Claude Code from zena-deep-research:
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Create `strategic_planning_workflow/graphv2.py` | ⬜ Pending | Graph structure with supervisor pattern |
+| Create `strategic_planning_workflow/config.py` | ⬜ Pending | Per-workflow configuration class |
+| Create `report_generation_workflow/graphv2.py` | ⬜ Pending | Graph structure with section expansion |
+| Create `report_generation_workflow/config.py` | ⬜ Pending | Per-workflow configuration class |
+| Create PR #72 tool wrappers | ⬜ Pending | `search_research_findings_tool`, etc. |
+| Port prompts from deep-research | ⬜ Pending | Supervisor, researcher, section prompts |
+| Move `report_types.json` to shared | ⬜ Pending | Add `suggested_outline` field |
+| Migrate outlines from `report_templates.py` | ⬜ Pending | Then mark for removal |
+| Copy integration plan to zena-workflow-spike | ⬜ Pending | For team reference |
+
+#### Phase B: Integration & Testing (Python Team)
+
+To be done by Python team:
+
+| Task | Notes |
+|------|-------|
+| Wire up Celery tasks | Connect `graphv2.py` to existing task infrastructure |
+| Update API endpoints | Add v2 workflow triggers if needed |
+| Test with real data | Validate against production scenarios |
+| Fix runtime issues | Debug and resolve any execution problems |
+| Update LangGraph Studio config | Expose v2 workflows in `langgraph.json` |
+| User approval flow integration | Connect to frontend for approval/feedback |
+| Production deployment | Gradual rollout with feature flags |
+
+### Files Copied from zena-deep-research
+
+The following files/content have been ported to zena-workflow-spike:
+
+| Source (deep-research) | Destination (workflow-spike) | Purpose |
+|------------------------|------------------------------|---------|
+| `src/open_deep_research/prompts.py` (partial) | `workflows/shared/prompts/` | Supervisor and researcher prompts |
+| `docs/INTEGRATION_PLAN.md` | `docs/INTEGRATION_PLAN.md` | This plan document |
+
+### Key Prompts Ported
+
+From `zena-deep-research/src/open_deep_research/prompts.py`:
+- `report_research_supervisor_prompt` - For section sketch generation supervisor
+- `report_researcher_prompt` - For section researchers
+- `write_report_section_prompt` - For section expansion
+- `compress_report_research_prompt` - For research compression
+
+### Testing Checklist for Python Team
+
+Before marking v2 workflows as production-ready:
+
+- [ ] `strategic_plan_workflow_v2` generates valid section_plan with depth levels
+- [ ] `strategic_plan_workflow_v2` generates section sketches with citations
+- [ ] User approval flow works for strategic plan
+- [ ] `report_generation_workflow_v2` expands sketches correctly
+- [ ] "Derives From" sections wait for dependencies
+- [ ] Citation utility generates correct bibliography
+- [ ] Per-section feedback triggers targeted regeneration
+- [ ] Version history works for post-approval changes
+- [ ] Standard sections (Exec Summary, Conclusions, etc.) generate in Phase 4
+- [ ] Langfuse traces show correct spans and token usage
+- [ ] LangGraph Studio can run workflows for debugging
+
+---
+
 ## Future Considerations
 
 - **Reprocessing**: Batch job to reprocess v1 documents with v2 Docling pipeline
