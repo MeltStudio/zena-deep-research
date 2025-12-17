@@ -9,6 +9,7 @@ Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-wor
 | Requirement | Notes |
 |-------------|-------|
 | **Langfuse Observability** | All workflow nodes must have `@observe()` decorator for tracing. This is already implemented across existing workflows - v2 must maintain this pattern. |
+| **LangSmith/LangGraph Studio Development** | All workflows must be runnable from LangSmith/LangGraph Studio for development and debugging. Follow existing `langgraph.json` configuration pattern. Individual workflows exposed separately, plus a combined "full pipeline" graph that chains all workflows. Nodes must use `Configuration` class with `config_schema` parameter for LangGraph Studio UI configuration. |
 | **Supervisor Pattern** | Follow the same supervisor/researcher architecture used in `research_workflow_v2`. Supervisor delegates tasks, researchers execute with tools. |
 | **Tool Access by Workflow Stage** | **research_workflow**: web search (Tavily) + internal docs. **strategic_plan & report_generation**: only `search_research_findings` (PR #72) - no new web searches. Downstream workflows synthesize from existing research, not conduct new searches. |
 
