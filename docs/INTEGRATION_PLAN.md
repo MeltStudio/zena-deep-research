@@ -17,18 +17,18 @@ Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-wor
 | Workflow | Status | Notes |
 |----------|--------|-------|
 | `research_workflow_v2` | ✅ Complete | PR #71 merged, PR #72 merged |
-| `restatement_workflow_v2` | 📋 Review Needed | Assess improvements from deep-research |
-| `strategic_plan_workflow_v2` | 📋 Planning | Design complete, questions to discuss |
-| `report_generation_workflow_v2` | 📋 Planning | Design complete, questions to discuss |
+| `restatement_workflow_v2` | ✅ Design Complete | No v2 needed - current implementation sufficient. Decisions documented. |
+| `strategic_plan_workflow_v2` | ✅ Design Complete | All decisions made. Ready for implementation. |
+| `report_generation_workflow_v2` | ✅ Design Complete | All decisions made. Ready for implementation. |
 
 ---
 
-## Active Work: research_workflow_v2
+## Completed: research_workflow_v2
 
-### Remaining Tasks
+### Tasks
 
 - [x] **Vector search over findings** - PR #72 merged
-- [ ] **Test end-to-end with real data**
+- [ ] **Test end-to-end with real data** (pending)
 
 ### PR #72: Vector Search Methods (MERGED)
 
@@ -151,10 +151,13 @@ Phase 2: Section-Level Planning (NEW)
 │   ├── LLM can add/remove/modify sections based on research
 │   ├── Assign depth levels per section (Deep Dive/Moderate/Surface)
 │   └── Output: final section structure for sketch generation
-└── generate_section_sketches (simple parallel execution, NOT supervisor pattern)
-    ├── One researcher per section (parallel)
+└── generate_section_sketches (supervisor assigns sections to researchers)
+    ├── Supervisor assigns CONTENT sections by depth level:
+    │   ├── Deep Dive: 1 section/researcher
+    │   ├── Moderate: up to 2 sections/researcher
+    │   └── Surface-level: up to 3 sections/researcher
     ├── Uses PR #72 search + analyze_research output + argumentative_flow
-    ├── Creates outline/sketch per section
+    ├── Creates outline/sketch per CONTENT section
     └── Includes citation placeholders
 
 Phase 3: Validation & Approval (from spike)
@@ -176,7 +179,11 @@ Phase 3: Validation & Approval (from spike)
 
 **Supervisor pattern:**
 - `analyze_research`: Create new supervisor using same structure as `research_workflow_v2`, but with prompts aligned to strategic analysis goal (not general research). Tools: PR #72 search only.
-- `generate_section_sketches`: No supervisor needed - simple parallel execution (one researcher per section)
+- `generate_section_sketches`: Supervisor assigns CONTENT sections to researchers based on depth level:
+  - Deep Dive: 1 section per researcher (full research)
+  - Moderate: up to 2 sections per researcher (standard research)
+  - Surface-level: up to 3 sections per researcher (minimal research, derives from other sections)
+  - Parallel execution with configurable concurrency (default 8)
 
 **PR #72 tool integration (MERGED):**
 - Create LangChain tools wrapping PR #72 database operations:
@@ -279,25 +286,35 @@ Phase 1: Context Loading (from spike)
 └── gather_data (documents, internal context, client questions, dynamic fields)
 
 Phase 2: Section-Level Generation (from deep-research, enhanced)
-├── For each section in section_plan (from strategic_plan_v2):
-│   ├── Depth level determines research intensity
-│   ├── "Derives From" sections use existing sketches (no new research)
-│   └── Parallel execution (configurable concurrency)
+├── Supervisor assigns sections to researchers based on depth level:
+│   ├── Deep Dive: 1 section per researcher (full research)
+│   ├── Moderate: up to 2 sections per researcher (standard research)
+│   └── Surface-level: up to 3 sections per researcher (minimal research)
 │
-├── section_researcher (per section)
+├── For each content section in section_plan (from strategic_plan_v2):
+│   ├── Uses approved section_sketch from strategic_plan as starting point
+│   ├── Depth level determines research intensity and researcher assignment
+│   ├── "Derives From" sections wait for dependencies, then synthesize
+│   └── Parallel execution (configurable concurrency, default 8)
+│
+├── section_researcher (assigned by supervisor)
 │   ├── USE PR #72: search_hybrid_research() for relevant findings + sources
 │   ├── Filter relevant internal docs/context
-│   └── Output: section research bundle
+│   └── Output: section research bundle (additional context for expansion)
 │
-├── write_section_sketch (per section)
-│   ├── Uses strategic hypothesis + recommendations for this section
-│   ├── Includes inline citations [1], [2]
-│   └── Output: section_sketch with sources
+├── expand_section (per section)
+│   ├── INPUT: approved section_sketch from strategic_plan
+│   ├── Expands sketch into full prose using research bundle + strategic context
+│   ├── Maintains inline citations from sketch, adds new citations as needed
+│   └── Output: full section content with sources
 │
-└── Collect all section_sketches
+├── Collect all expanded sections
+│
+└── NOTE: Standard sections (Executive Summary, Conclusions, Bibliography, TOC, Cover)
+    are NOT part of Phase 2 - they are generated in Phase 4 after content is complete
 
 Phase 3: Assembly & Validation (from spike, enhanced)
-├── assemble_draft_report (combine sketches with citation renumbering)
+├── assemble_draft_report (combine expanded sections with citation renumbering)
 ├── validate_report (quality + consistency + citation coverage)
 ├── [conditional] retrieve_additional_info (fill gaps - USE PR #72 for targeted search)
 ├── [conditional] refine_sections (targeted per-section refinement)
@@ -316,12 +333,37 @@ Phase 4: Polish & Persist (from spike)
 |------------|-------------------|
 | Rich data aggregation (docs, context, questions) | Per-section research with depth levels |
 | Strategic plan integration (hypothesis, recommendations) | "Derives From" dependency handling |
-| Validation + consistency checking | Section sketches with inline citations |
-| Refinement loop (targeted, not full) | Parallel section execution |
-| Executive summary, cover, regulatory review | Citation utilities (extraction, parsing, renumbering) |
-| Report templates | Progressive token limit handling |
+| Validation + consistency checking | Parallel section execution |
+| Refinement loop (targeted, not full) | Citation utilities (extraction, parsing, renumbering) |
+| Executive summary, cover, regulatory review | Progressive token limit handling |
+| Report templates | |
 | Database persistence + S3 | |
 | Celery integration | |
+| User approval with version history | |
+
+### Key Distinction: Content Sections vs Standard Sections
+
+**Content sections** are the unique, research-driven sections that vary by report type (e.g., Market Analysis, Competitive Landscape, Consumer Insights). These:
+- Are defined in `section_plan` from `strategic_plan_workflow_v2`
+- Have depth levels (Deep Dive / Moderate / Surface-level) that determine research intensity
+- Can have `derives_from[]` dependencies on other content sections
+- Get sketches created and approved in strategic_plan
+- Are expanded into full prose in report_generation Phase 2
+
+**Standard sections** are generated automatically for every report and don't need planning or sketches:
+- Executive Summary (synthesizes all content sections)
+- Conclusions (synthesizes key findings)
+- Bibliography (generated by citation utility)
+- Table of Contents (generated from final structure)
+- Cover Page
+
+Standard sections are generated in Phase 4, AFTER all content sections are complete, because they need the full report context.
+
+### Key Distinction: Sketches vs Expansion
+
+**Section sketches** are created in `strategic_plan_workflow_v2` and approved by the user before report generation begins. This allows users to review the planned content and structure before investing in full prose generation.
+
+**Section expansion** happens in `report_generation_workflow_v2`. It takes the approved sketches and expands them into full prose, adding additional research context and citations as needed. This is NOT creating new sketches - it's expanding approved outlines into final content.
 
 ### Decisions Made
 
@@ -338,6 +380,7 @@ Phase 4: Polish & Persist (from spike)
 | Refinement scope? | **Per-section + consistency loop** | Regenerate problematic section(s), then run consistency check across all sections. If inconsistencies found, regenerate affected sections. Supports both per-section and report-level user feedback. |
 | Where to store section sketches? | **StrategicPlan table** | Store alongside existing `report_structure` field (proposed outline). User can see both outline and sketches when reviewing strategic plan. |
 | Should "Derives From" sections skip research? | **A) Yes - synthesize only** | Surface sections (Executive Summary, Conclusions) derive from existing report content. No additional research - just synthesize from referenced sections. |
+| User approval for final report? | **Yes - with version history** | User can give feedback on individual sections and/or the full report. Feedback triggers targeted regeneration. Upon approval, report is marked as "final" which triggers downstream outputs (PowerPoint, PDF). Post-approval modifications create new versions (v2, v3, etc.) with full version history. Each version can be approved to regenerate outputs. |
 
 ---
 
@@ -345,35 +388,108 @@ Phase 4: Polish & Persist (from spike)
 
 Each workflow produces artifacts consumed by the next. We need to ensure optimal data flow.
 
-### Current Artifact Flow
+### v2 Artifact Flow
 
 ```
 restatement_workflow
     │
+    ├── Consumes: Intake form data (client profile, company, project requirements, strategic questions)
     ├── Produces: ProblemRestatement (text, objectives, constraints, context_summary)
+    ├── Produces: Shared ReportContext object (initialized with restatement + intake data)
     │
     ▼
 research_workflow_v2
     │
-    ├── Consumes: ProblemRestatement
-    ├── Produces: ResearchSession (summary, key_insights, contradictions, coverage_gaps)
-    ├── Produces: ResearchFindings (compressed summaries with embeddings)
-    ├── Produces: ResearchSources (individual sources with embeddings)
+    ├── Consumes: ReportContext (restatement_text + raw intake data)
+    ├── Consumes: [Feature flag] global_context (definitions, analyses, formulas)
+    ├── Produces: ResearchSession (summary, key_insights)
+    │   └── Note: contradictions/coverage_gaps resolved by supervisor; surfaced to user if unresolved
+    ├── Produces: ResearchFindings (compressed summaries with embeddings) - queryable via PR #72
+    ├── Produces: ResearchSources (individual sources with embeddings) - queryable via PR #72
+    ├── Updates: ReportContext with research_session_id
     │
     ▼
-strategic_plan_workflow
+strategic_plan_workflow_v2
     │
-    ├── Consumes: ProblemRestatement, ResearchSession
-    ├── Produces: StrategicPlan (hypothesis, recommendations, argumentative_flow, report_structure)
+    ├── Consumes: ReportContext (restatement, intake data, research_session_id)
+    ├── Queries: ResearchFindings dynamically via PR #72 vector search
+    ├── Produces: StrategicPlan
+    │   ├── hypothesis (strategic hypothesis)
+    │   ├── recommendations_framework
+    │   ├── argumentative_flow (separate field, used as prompt input)
+    │   ├── section_plan (CONTENT sections only - NOT exec summary, conclusions, etc.)
+    │   │   └── Each section has: name, description, depth_level, derives_from[]
+    │   └── section_sketches (outline per CONTENT section with citation placeholders)
+    ├── User approval: Reviews plan + sketches before proceeding
+    ├── Updates: ReportContext with strategic_plan_id
+    │
+    ├── NOTE: Standard sections are NOT in section_plan:
+    │   └── Executive Summary, Conclusions, Bibliography, TOC, Cover Page
+    │       → These are generated in report_generation Phase 4
     │
     ▼
-report_generation_workflow
+report_generation_workflow_v2
     │
-    ├── Consumes: ProblemRestatement, ResearchSession, StrategicPlan
-    ├── Produces: GeneratedReport (markdown, sections, executive_summary)
+    ├── Consumes: ReportContext (restatement, intake questions, strategic_plan with sketches)
+    │
+    ├── Phase 2: Content Section Generation
+    │   ├── Supervisor assigns CONTENT sections to researchers by depth level
+    │   │   ├── Deep Dive: 1 section/researcher
+    │   │   ├── Moderate: up to 2 sections/researcher
+    │   │   └── Surface-level: up to 3 sections/researcher
+    │   ├── Queries: ResearchFindings/Sources via PR #72 for section expansion
+    │   ├── Expands: Approved section_sketches → full prose (parallel, max 8 concurrent)
+    │   └── "Derives From" content sections wait for dependencies, then synthesize
+    │
+    ├── Phase 3: Assembly & Validation
+    │   ├── Assemble expanded content sections with citation renumbering
+    │   ├── Validate: Per-section + consistency loop
+    │   └── User feedback: Per-section and/or full report feedback → targeted regeneration
+    │
+    ├── Phase 4: Standard Sections (generated AFTER content is complete)
+    │   ├── Executive Summary (synthesizes all content sections)
+    │   ├── Conclusions (synthesizes key findings)
+    │   ├── Bibliography (generated by citation utility from all sources)
+    │   ├── Table of Contents (generated from final structure)
+    │   └── Cover Page
+    │
+    ├── Produces: GeneratedReport
+    │   ├── markdown (full report with TOC)
+    │   ├── sections[] (individual section content)
+    │   ├── executive_summary
+    │   ├── conclusions
+    │   ├── bibliography
+    │   ├── version (v1, v2, v3...)
+    │   └── status (draft/approved)
+    │
+    ├── User approval: Marks report as "final"
+    │   └── Triggers: PowerPoint generation, PDF export, other outputs
+    ├── Post-approval changes: Create new version (v2, v3...) with full history
     │
     ▼
-END
+END (with version history preserved)
+```
+
+### Shared ReportContext Object
+
+A single context object passed through all workflows containing latest/approved versions:
+
+```python
+class ReportContext:
+    # From restatement_workflow
+    problem_restatement: ProblemRestatement
+    intake_data: dict  # Raw intake form data for reference
+
+    # From research_workflow_v2
+    research_session_id: str  # For PR #72 queries
+
+    # From strategic_plan_workflow_v2
+    strategic_plan_id: str
+
+    # Metadata
+    report_id: str
+    workspace_id: str
+    current_version: int
 ```
 
 ### Questions to Review
