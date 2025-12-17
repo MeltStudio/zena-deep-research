@@ -541,3 +541,5 @@ class ReportContext:
 - **MCP Integration**: Model Context Protocol servers for extended capabilities
 - **Report Templates**: Customizable report formats
 - **A/B Testing**: Compare v1 vs v2 output quality
+- **v1 Graph Cleanup**: Remove v1 `graph.py` files once v2 is stable and fully deployed
+- **Document Ingestion Alignment**: Update document ingestion workflow to use `graphv2.py` pattern (currently has different structure)
