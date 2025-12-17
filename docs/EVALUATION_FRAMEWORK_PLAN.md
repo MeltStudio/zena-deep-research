@@ -130,12 +130,14 @@ langfuse.score(
 Set up basic quality monitoring on production traces:
 
 1. **Enable managed evaluators** on report generation traces:
-   - Hallucination (sample 10% of traces)
-   - Helpfulness (sample 10% of traces)
+   - Hallucination (100% of traces)
+   - Helpfulness (100% of traces)
 
 2. **Create dashboard** to track scores over time
 
 3. **Set up alerts** for low scores
+
+**Note:** We sample 100% initially since report volume is low. Reduce sampling when volume increases.
 
 ### Phase 2: Custom Report Evaluators (Near-term)
 
@@ -225,22 +227,24 @@ Evaluators will be configured in Langfuse UI, not in code.
 | Setting | Value | Rationale |
 |---------|-------|-----------|
 | Default model | `gpt-4o` | Best judgment quality |
-| Sampling rate | 10-20% | Balance cost vs coverage |
+| Sampling rate | 100% | Low volume, evaluate every report |
 | Scope | New traces only | Avoid reprocessing |
 | Filter | `trace.name = "report_generation_v2"` | Target specific workflow |
+
+**Note:** Reduce sampling rate when report volume increases significantly.
 
 ---
 
 ## Cost Estimation
 
-| Evaluator | Tokens/eval | Cost/eval | Monthly (100 reports, 10% sample) |
+| Evaluator | Tokens/eval | Cost/eval | Monthly (100 reports, 100% sample) |
 |-----------|-------------|-----------|-----------------------------------|
-| Hallucination | ~2000 | ~$0.02 | $0.20 |
-| Helpfulness | ~2000 | ~$0.02 | $0.20 |
-| Report Depth | ~3000 | ~$0.03 | $0.30 |
-| Citation Quality | ~2500 | ~$0.025 | $0.25 |
+| Hallucination | ~2000 | ~$0.02 | $2.00 |
+| Helpfulness | ~2000 | ~$0.02 | $2.00 |
+| Report Depth | ~3000 | ~$0.03 | $3.00 |
+| Citation Quality | ~2500 | ~$0.025 | $2.50 |
 
-**Total estimated cost:** ~$1-2/month at 10% sampling
+**Total estimated cost:** ~$10-15/month at 100% sampling (negligible given report value)
 
 ---
 
