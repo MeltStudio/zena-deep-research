@@ -535,6 +535,40 @@ class ReportContext:
 
 ---
 
+## Implementation Guidelines
+
+### Code Structure Decisions
+
+| Decision | Choice | Notes |
+|----------|--------|-------|
+| **PR #72 Vector Search** | Merged to dev | Methods: `search_research_findings`, `search_research_sources`, `search_hybrid_research` |
+| **Tool Wrapper Pattern** | `@tool` decorator + `InjectedToolArg` | Inject workspace_id, report_id, research_session_id. Follow `RunnableConfig` pattern for tracing. |
+| **Configuration Classes** | Per-workflow config in `workflow_name/config.py` | Follow PR #74's `StrategicPlanningConfiguration` pattern. Each workflow has its own config class. |
+| **report_types.json** | Move to shared location | Move from `api/config/` to shared location. Add `suggested_outline` field. Migrate outlines from `report_templates.py`, then remove that file. |
+| **Celery Task Base** | Use existing `PlanTask` | Supervisor pattern is workflow-level, not task-level. No new base class needed. |
+| **File Naming** | `graphv2.py` alongside `graph.py` | Keep v1 graphs for now. Cleanup in future phase. |
+
+### Source Code References
+
+| Resource | Location | Notes |
+|----------|----------|-------|
+| **PR #74 Branch** | `feature/brt-96-upgrade-report-generation` | Pull code from here for strategic planning config pattern |
+| **research_workflow_v2** | `workflows/research_workflow/graphv2.py` | Reference implementation for supervisor/researcher pattern |
+| **PR #72 Methods** | `database/operations/research.py` | Vector search methods for research findings/sources |
+| **report_types.json** | `api/config/report_types.json` | Will be moved to shared location |
+| **report_templates.py** | `workflows/report_generation_workflow/utils/report_templates.py` | Outlines to migrate, then remove |
+
+### LangSmith/LangGraph Studio
+
+All workflows must be runnable from LangSmith/LangGraph Studio for development:
+- Follow existing `langgraph.json` configuration pattern
+- Individual workflows exposed separately
+- Combined "full pipeline" graph that chains all workflows
+- Use `config_schema` parameter in `StateGraph` for UI configuration
+- All LLM calls must use `RunnableConfig` for proper tracing
+
+---
+
 ## Future Considerations
 
 - **Reprocessing**: Batch job to reprocess v1 documents with v2 Docling pipeline
