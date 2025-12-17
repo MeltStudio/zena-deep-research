@@ -259,10 +259,17 @@ Evaluators will be configured in Langfuse UI, not in code.
 
 ---
 
+## Prerequisites
+
+- [ ] **OpenAI API key from Brantuit AI organization** - Required for LLM connection in Langfuse. Must be a project-scoped key from the Brantuit AI org so charges go to the correct billing account.
+
+---
+
 ## Next Steps
 
-1. [ ] Set up LLM connection in Langfuse (if not already done)
-2. [ ] Enable Hallucination + Helpfulness evaluators on production
-3. [ ] Create custom Report Depth evaluator template
-4. [ ] Create Langfuse dashboard for report quality metrics
-5. [ ] Document evaluator configuration for team
+1. [ ] Obtain OpenAI API key from Brantuit AI organization
+2. [ ] Set up LLM connection in Langfuse (Project Settings → LLM Connections)
+3. [ ] Enable Hallucination + Helpfulness evaluators on production
+4. [ ] Create custom Report Depth evaluator template
+5. [ ] Create Langfuse dashboard for report quality metrics
+6. [ ] Document evaluator configuration for team
