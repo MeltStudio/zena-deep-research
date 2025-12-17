@@ -16,7 +16,7 @@ Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-wor
 
 | Workflow | Status | Notes |
 |----------|--------|-------|
-| `research_workflow_v2` | ✅ Complete | PR #71 merged, PR #72 pending |
+| `research_workflow_v2` | ✅ Complete | PR #71 merged, PR #72 merged |
 | `restatement_workflow_v2` | 📋 Review Needed | Assess improvements from deep-research |
 | `strategic_plan_workflow_v2` | 📋 Planning | Design complete, questions to discuss |
 | `report_generation_workflow_v2` | 📋 Planning | Design complete, questions to discuss |
@@ -27,10 +27,10 @@ Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-wor
 
 ### Remaining Tasks
 
-- [ ] **Vector search over findings** - PR #72 (draft, branch: `feature/research-vector-search-tool`)
+- [x] **Vector search over findings** - PR #72 merged
 - [ ] **Test end-to-end with real data**
 
-### PR #72: Vector Search Methods
+### PR #72: Vector Search Methods (MERGED)
 
 Adds database operations for searching research data:
 - `search_research_findings()` - Vector search on findings by report_id
@@ -134,25 +134,63 @@ Merge strategic depth from spike with section-level planning from deep-research.
 ```
 Phase 1: Strategic Foundation (from spike)
 ├── load_context
-├── analyze_research (USE PR #72: search_research_findings for relevant research)
-├── generate_strategic_hypothesis (USE PR #72: search_research_findings to retrieve relevant findings)
+├── analyze_research
+│   ├── Invokes supervisor/researcher subgraph
+│   ├── Researchers use PR #72 search_research_findings
+│   ├── OUTPUT MUST BE COMPREHENSIVE - feeds all downstream nodes
+│   ├── Use configurable model (default to high-quality model, not Haiku)
+│   └── Produces rich findings for: hypothesis, recommendations, section planning, sketches
+├── generate_strategic_hypothesis (uses PR #72 to query findings from analyze_research)
 └── establish_recommendations
 
-Phase 2: Section-Level Planning (NEW - from deep-research concepts)
-├── plan_report_sections (replaces argumentative_flow + structure_report_plan)
+Phase 2: Section-Level Planning (NEW)
+├── plan_argumentative_flow (separate node - kept from v1)
+│   └── Output: argumentative_flow (used as prompt input for downstream nodes)
+├── plan_report_sections
+│   ├── Load suggested outline from report_types.json
+│   ├── LLM can add/remove/modify sections based on research
 │   ├── Assign depth levels per section (Deep Dive/Moderate/Surface)
-│   ├── Identify "Derives From" dependencies
-│   ├── Map recommendations to sections
-│   └── Define required information per section
-└── generate_section_sketches (OPTIONAL - parallel outlines per section)
-    ├── Uses PR #72 search to retrieve relevant findings
+│   └── Output: final section structure for sketch generation
+└── generate_section_sketches (simple parallel execution, NOT supervisor pattern)
+    ├── One researcher per section (parallel)
+    ├── Uses PR #72 search + analyze_research output + argumentative_flow
     ├── Creates outline/sketch per section
     └── Includes citation placeholders
 
-Phase 3: Validation & Persistence (from spike)
+Phase 3: Validation & Approval (from spike)
 ├── validate_plan (enhanced with section coverage check)
+├── persist_draft_plan
+├── request_approval (user reviews plan + section sketches)
+│   ├── If approved → persist_plan (final)
+│   └── If rejected → regenerate with feedback (loop back to relevant phase)
 └── persist_plan
 ```
+
+### Implementation Notes
+
+**analyze_research improvements needed:**
+- Current summary is too condensed - needs to be more complete
+- Downstream prompts only use limited insights - should use more
+- Currently uses Haiku model (mediocre results) - need configurable model defaulting to higher quality
+- Follow PR #74's `StrategicPlanningConfiguration` pattern for model config
+
+**Supervisor pattern:**
+- `analyze_research`: Create new supervisor using same structure as `research_workflow_v2`, but with prompts aligned to strategic analysis goal (not general research). Tools: PR #72 search only.
+- `generate_section_sketches`: No supervisor needed - simple parallel execution (one researcher per section)
+
+**PR #72 tool integration (MERGED):**
+- Create LangChain tools wrapping PR #72 database operations:
+  - `search_research_findings_tool` - wraps `search_research_findings()`
+  - `search_research_sources_tool` - wraps `search_research_sources()`
+  - `search_hybrid_research_tool` - wraps `search_hybrid_research()`
+- Wire these tools into the strategic planning supervisor/researchers
+
+**report_types.json integration:**
+- Add `suggested_outline` field to `report_types.json` schema and parser
+- Migrate existing outlines from `report_templates.py` (will be removed):
+  - Competitive Deep Dive, Market Trends, Consumer Insights, Brand Positioning, Product Brain Stormer, Default
+- Team will provide content for any missing report types
+- For initial implementation, can generate placeholder outlines for types not yet defined
 
 ### Decisions Made
 
@@ -291,15 +329,15 @@ Phase 4: Polish & Persist (from spike)
 |----------|----------|-------|
 | Section research: new searches or retrieve existing? | **A) Vector search only** | No new Tavily searches - use PR #72 to retrieve from existing research_findings/sources. See Cross-Cutting Requirements. |
 
-### Questions to Discuss
+### Decisions Made (continued)
 
-| Question | Options | Notes |
-|----------|---------|-------|
-| **Citation renumbering approach** | A) Explicit utility (deterministic)<br>B) Let model handle it<br>C) Hybrid (utility + model cleanup) | Model-only has failed in testing; utility is more reliable |
-| **Parallel execution limit** | A) Fixed (e.g., 4)<br>B) Configurable per report type<br>C) Dynamic based on section count | More parallelism = faster but higher resource usage |
-| **Refinement scope** | A) Full report regeneration<br>B) Per-section targeted refinement<br>C) Only sections that failed validation | Per-section is more efficient but adds complexity |
-| **Where to store section sketches?** | A) Only in-memory during workflow<br>B) Persist in generated_reports table<br>C) Separate table | Persisting helps debugging and potential reuse |
-| **Should "Derives From" sections skip research entirely?** | A) Yes - synthesize only from referenced sections<br>B) No - still do light research<br>C) Configurable per section | Skipping saves cost but may miss nuances |
+| Question | Decision | Notes |
+|----------|----------|-------|
+| Citation renumbering approach? | **A) Explicit utility** | LLM injects URLs/sources directly in markdown; utility extracts sources, generates bibliography section, and replaces inline refs with numbered citations [1], [2], etc. Deterministic and reliable. |
+| Parallel execution limit? | **Fixed at 8, configurable** | Default to 8 concurrent section researchers; parameter comes from config for easy future adjustment |
+| Refinement scope? | **Per-section + consistency loop** | Regenerate problematic section(s), then run consistency check across all sections. If inconsistencies found, regenerate affected sections. Supports both per-section and report-level user feedback. |
+| Where to store section sketches? | **StrategicPlan table** | Store alongside existing `report_structure` field (proposed outline). User can see both outline and sketches when reviewing strategic plan. |
+| Should "Derives From" sections skip research? | **A) Yes - synthesize only** | Surface sections (Executive Summary, Conclusions) derive from existing report content. No additional research - just synthesize from referenced sections. |
 
 ---
 
@@ -346,9 +384,34 @@ END
 | **Restatement → Research** | ~~Should `global_context` be passed?~~ | **DECIDED**: Feature flag (default disabled). Allows A/B testing to measure if global_context improves report quality. Can enable later if valuable. |
 | **Research → Strategic Plan** | ~~Is `ResearchSession.key_insights` enough?~~ | **DECIDED**: Query `ResearchFindings` dynamically via PR #72 vector search based on what information is needed in each step |
 | **Research → Strategic Plan** | ~~Are `contradictions` and `coverage_gaps` needed?~~ | **DECIDED**: Supervisor should resolve these through iteration. If they persist after max iterations, surface to user for resolution (upload more docs, provide clarification, or choose interpretation). |
-| **Strategic Plan → Report** | Is `section_plan` (v2) sufficient for section-level generation? | New artifact; needs to include all context per section |
-| **Strategic Plan → Report** | Should `recommendations_framework` map explicitly to sections? | Current mapping is implicit via argumentative_flow |
-| **All → All** | Should we have a shared "report context" object passed through? | Would ensure consistency but adds coupling |
+| **Strategic Plan → Report** | ~~Is `section_plan` (v2) sufficient?~~ | **DECIDED**: `section_plan` is needed, but report generation also needs access to `problem_restatement` and intake form questions (what user wants answered). |
+| **Strategic Plan → Report** | ~~Should `recommendations_framework` map explicitly to sections?~~ | **DECIDED**: No - keep implicit. Don't constrain the LLM; it may decide to use a recommendation in a different section than expected. |
+| **All → All** | ~~Should we have a shared "report context" object?~~ | **DECIDED**: Yes - create shared context object passed through all workflows. Must always contain latest/approved versions of restatement, strategic plan, etc. Handle versioning carefully. |
+
+### Validation Issues to Fix
+
+**Current `report_validator.py` problems:**
+1. **Truncates to 10k chars** (line 168) - misses most of the report content
+2. **Uses Haiku model** (`ModelPreset.BALANCED`) - not thorough enough for validation
+3. **Defaults to 0.8 score on error** (line 143) - masks validation failures
+
+**v2 fixes needed:**
+- Validate full report (or validate per-section, then aggregate)
+- Use higher-quality model for validation (configurable)
+- Fail properly on validation errors instead of passing silently
+
+### Scoring Configuration Review
+
+**Issue:** Scores throughout the application are hardcoded arbitrary numbers from initial development. Need to:
+- Move all score thresholds to configuration
+- Re-evaluate what scores actually mean and their appropriate thresholds
+- Make scoring criteria consistent across workflows
+
+**Areas to review:**
+- Validation scores (completeness, consistency, evidence, quality)
+- Similarity thresholds for vector search
+- Quality thresholds for refinement triggers
+- Any other hardcoded score comparisons
 
 ---
 
