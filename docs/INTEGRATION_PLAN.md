@@ -19,8 +19,22 @@ Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-wor
 |----------|--------|-------|
 | `research_workflow_v2` | ✅ Complete | PR #71 merged, PR #72 merged |
 | `restatement_workflow_v2` | ✅ Design Complete | No v2 needed - current implementation sufficient. Decisions documented. |
-| `strategic_plan_workflow_v2` | ✅ Design Complete | All decisions made. Ready for implementation. |
-| `report_generation_workflow_v2` | ✅ Design Complete | All decisions made. Ready for implementation. |
+| `strategic_plan_workflow_v2` | ✅ Implementation Complete | PR #76 - Ready to merge |
+| `report_generation_workflow_v2` | ✅ Implementation Complete | PR #76 - Ready to merge |
+
+### PR #76 Status: ✅ Verified - Ready to Merge
+
+**All changes verified:**
+- [x] Remove `summary` field from `ExpansionComplete`
+- [x] Change `recursion_limit` default from 50 to 25
+- [x] Update model defaults to `gpt-5.2-2025-12-11` and `gpt-5-nano-2025-08-07`
+- [x] Move nodes from `graphv2.py` to `nodes/` folder
+- [x] Add proper return type annotations (TypedDict)
+- [x] Add missing LangFuse prompts (expansion_supervisor, execute_section_expansion)
+- [x] Add `conclusions` and `bibliography` fields to API responses
+
+**Database Migration Required:** `a692adc41bc4_add_conclusions_bibliography_to_.py`
+> ⚠️ Run this migration on production before deploying PR #76
 
 ---
 
@@ -648,3 +662,44 @@ Before marking v2 workflows as production-ready:
 - **A/B Testing**: Compare v1 vs v2 output quality
 - **v1 Graph Cleanup**: Remove v1 `graph.py` files once v2 is stable and fully deployed
 - **Document Ingestion Alignment**: Update document ingestion workflow to use `graphv2.py` pattern (currently has different structure)
+
+---
+
+## Post-V2 Launch: Report Approval & Versioning
+
+The following features are **deferred to a separate PR** after v2 launch:
+
+### Report Approval/Rejection Flow
+
+**Current State:** Reports go directly to "completed" status with no approval step.
+
+**What's Needed:**
+1. Add `POST /generated-reports/{id}/actions/approve` endpoint
+   - Marks report as "final"
+   - Triggers downstream outputs (PowerPoint, PDF)
+2. Add `POST /generated-reports/{id}/actions/reject` endpoint
+   - Accepts `feedback_text` parameter
+   - Triggers report regeneration with feedback
+3. Add `feedback_text` field to `GeneratedReport` model
+4. Add new status: `report_ready` (before approval)
+5. Update frontend with approval UI
+
+### Report Version History
+
+**Depends on:** Report approval flow (above)
+
+**What's Needed:**
+1. Add `version` field to `GeneratedReport` model
+2. Add `GET /reports/{id}/versions` endpoint
+3. Add `GET /reports/{id}/versions/{ver}` endpoint
+4. Create version history UI in frontend
+
+### Per-Section Feedback
+
+**What's Needed:**
+1. Add `section_feedback` JSONB field to `GeneratedReport`
+2. Add per-section feedback API endpoints
+3. Implement per-section regeneration logic in workflow
+4. Add per-section feedback UI in frontend
+
+**Complexity:** High - requires workflow changes to regenerate specific sections without redoing the entire report.
