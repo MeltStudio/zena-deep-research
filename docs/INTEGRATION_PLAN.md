@@ -9,6 +9,8 @@ Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-wor
 | Requirement | Notes |
 |-------------|-------|
 | **Langfuse Observability** | All workflow nodes must have `@observe()` decorator for tracing. This is already implemented across existing workflows - v2 must maintain this pattern. |
+| **Supervisor Pattern** | Follow the same supervisor/researcher architecture used in `research_workflow_v2`. Supervisor delegates tasks, researchers execute with tools. |
+| **Tool Access by Workflow Stage** | **research_workflow**: web search (Tavily) + internal docs. **strategic_plan & report_generation**: only `search_research_findings` (PR #72) - no new web searches. Downstream workflows synthesize from existing research, not conduct new searches. |
 
 ## Current Status
 
@@ -160,11 +162,11 @@ Phase 3: Validation & Persistence (from spike)
 | Keep argumentative_flow separate? | **A) Keep both** | Maintain as separate field; use as prompt input during section generation |
 | Report structure source? | **`report_types.json`** | Each report type defines suggested sections; strategic plan can add/remove sections based on analysis |
 
-### Questions to Discuss
+### Decisions Made (continued)
 
-| Question | Options | Notes |
-|----------|---------|-------|
-| **How much can strategic plan modify template sections?** | A) Only customize content within template sections<br>B) Can add sections but not remove<br>C) Full flexibility (add/remove based on analysis) | Manuel leans toward C - strategic plan should be able to adapt structure to specific markets or user questions |
+| Question | Decision | Notes |
+|----------|----------|-------|
+| Template customization? | **C) Hybrid** | `report_types.json` provides suggested outline per report type; LLM can add/remove sections and adjust section depth based on analysis |
 
 ---
 
@@ -283,11 +285,16 @@ Phase 4: Polish & Persist (from spike)
 | Database persistence + S3 | |
 | Celery integration | |
 
+### Decisions Made
+
+| Question | Decision | Notes |
+|----------|----------|-------|
+| Section research: new searches or retrieve existing? | **A) Vector search only** | No new Tavily searches - use PR #72 to retrieve from existing research_findings/sources. See Cross-Cutting Requirements. |
+
 ### Questions to Discuss
 
 | Question | Options | Notes |
 |----------|---------|-------|
-| **Section research: new searches or just retrieve existing?** | A) Vector search on existing research_findings/sources (PR #72)<br>B) New Tavily searches per section<br>C) Hybrid (retrieve first, search if gaps) | Option A reuses research_workflow_v2 output; B is more thorough but slower/costlier |
 | **Citation renumbering approach** | A) Explicit utility (deterministic)<br>B) Let model handle it<br>C) Hybrid (utility + model cleanup) | Model-only has failed in testing; utility is more reliable |
 | **Parallel execution limit** | A) Fixed (e.g., 4)<br>B) Configurable per report type<br>C) Dynamic based on section count | More parallelism = faster but higher resource usage |
 | **Refinement scope** | A) Full report regeneration<br>B) Per-section targeted refinement<br>C) Only sections that failed validation | Per-section is more efficient but adds complexity |
@@ -335,12 +342,10 @@ END
 
 | Interface | Question | Notes |
 |-----------|----------|-------|
-| **Restatement → Research** | Is `restatement_text` sufficient to guide research? | Research brief is generated from this field; `objectives`, `constraints`, `context_summary` also available |
-| **Restatement → Research** | Should `restatement_text` be enhanced? | Francisco suggests a richer summary; current text may be missing key context |
-| **Restatement → Research** | Should intake form be passed to research? | Research may benefit from seeing raw user questions directly, not just the restatement |
-| **Restatement → Research** | Should `global_context` be passed or scrapped entirely? | **⚠️ TEAM DISCUSSION NEEDED**: Francisco says not needed; Sebastián built this functionality. Need alignment on whether to keep, modify, or remove |
+| **Restatement → Research** | ~~Is `restatement_text` sufficient?~~ | **DECIDED**: Pass both `restatement_text` AND raw intake data. Prompt should clarify that restatement is the refined/approved version, while intake is raw data for reference if needed. |
+| **Restatement → Research** | ~~Should `global_context` be passed?~~ | **DECIDED**: Feature flag (default disabled). Allows A/B testing to measure if global_context improves report quality. Can enable later if valuable. |
 | **Research → Strategic Plan** | ~~Is `ResearchSession.key_insights` enough?~~ | **DECIDED**: Query `ResearchFindings` dynamically via PR #72 vector search based on what information is needed in each step |
-| **Research → Strategic Plan** | Are `contradictions` and `coverage_gaps` being used? | Francisco says not needed; Manuel sees potential for user-facing conflict resolution. Keep open for debate |
+| **Research → Strategic Plan** | ~~Are `contradictions` and `coverage_gaps` needed?~~ | **DECIDED**: Supervisor should resolve these through iteration. If they persist after max iterations, surface to user for resolution (upload more docs, provide clarification, or choose interpretation). |
 | **Strategic Plan → Report** | Is `section_plan` (v2) sufficient for section-level generation? | New artifact; needs to include all context per section |
 | **Strategic Plan → Report** | Should `recommendations_framework` map explicitly to sections? | Current mapping is implicit via argumentative_flow |
 | **All → All** | Should we have a shared "report context" object passed through? | Would ensure consistency but adds coupling |
