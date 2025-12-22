@@ -19,22 +19,59 @@ Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-wor
 |----------|--------|-------|
 | `research_workflow_v2` | ✅ Complete | PR #71 merged, PR #72 merged |
 | `restatement_workflow_v2` | ✅ Design Complete | No v2 needed - current implementation sufficient. Decisions documented. |
-| `strategic_plan_workflow_v2` | ✅ Implementation Complete | PR #76 - Ready to merge |
-| `report_generation_workflow_v2` | ✅ Implementation Complete | PR #76 - Ready to merge |
+| `strategic_plan_workflow_v2` | ✅ Ready for Merge | PR #76 - `graphv2.py` |
+| `report_generation_workflow_v2` | ✅ Ready for Merge | PR #76 - `graphv3.py` |
 
-### PR #76 Status: ✅ Verified - Ready to Merge
+### PR #76 + PR #79 Integration - COMPLETE
 
-**All changes verified:**
-- [x] Remove `summary` field from `ExpansionComplete`
-- [x] Change `recursion_limit` default from 50 to 25
-- [x] Update model defaults to `gpt-5.2-2025-12-11` and `gpt-5-nano-2025-08-07`
-- [x] Move nodes from `graphv2.py` to `nodes/` folder
-- [x] Add proper return type annotations (TypedDict)
-- [x] Add missing LangFuse prompts (expansion_supervisor, execute_section_expansion)
-- [x] Add `conclusions` and `bibliography` fields to API responses
+**Decision:** Integrated PR #79's better report generation nodes into PR #76's infrastructure.
+
+**Final Workflow Architecture (`graphv3.py`):**
+
+```
+1. fetch_report_data               ← PR #79
+2. report_researcher_supervisor    ← PR #79 (compiled subgraph)
+   └── report_researcher           ← PR #79 (iterative research)
+3. write_report                    ← PR #79 (main report body)
+4. generate_executive_summary      ← v3 node
+5. generate_conclusions            ← v3 node
+6. generate_bibliography           ← v3 node
+7. generate_toc                    ← v3 node
+8. generate_cover_page             ← v3 node
+9. finalize_report                 ← v3 node (assembly)
+10. persist_report                 ← v3 node (saves all DB fields)
+```
+
+**Celery Integration:** ✅ Complete
+- `plan_tasks.py` calls `run_strategic_planning_workflow()` from `graphv2.py`
+- `report_tasks.py` calls `run_report_generation_workflow()` from `graphv3.py`
 
 **Database Migration Required:** `a692adc41bc4_add_conclusions_bibliography_to_.py`
 > ⚠️ Run this migration on production before deploying PR #76
+
+### Pre-Merge Review Items
+
+The following items need team decision before merge (see PR #76 comment for discussion):
+
+**Missing (Not Implemented):**
+1. Validation + refinement loop (Phase 3 from plan)
+2. "Derives From" section dependencies
+3. Per-section depth levels (Deep Dive / Moderate / Surface)
+4. Citation renumbering utility
+
+**Partial (Needs Verification):**
+5. Tool access - verify no Tavily calls in report generation
+6. `@observe()` decorators on all nodes
+7. Prompts in LangFuse vs hardcoded
+8. `langgraph.json` pointing to v3 graphs
+
+### Cleanup Needed (After Merge)
+
+1. Remove `graphv2.py` (report generation) - replaced by `graphv3.py`
+2. Remove old nodes (`supervisor_tools_v2.py`, expansion supervisor, etc.)
+3. Remove unused states (`ReportStateV2`, `ReportState`)
+4. Remove `persist_report.py` - replaced by `persist_reportv3.py`
+5. Fix typo: `fecth_report_data.py` → `fetch_report_data.py`
 
 ---
 
