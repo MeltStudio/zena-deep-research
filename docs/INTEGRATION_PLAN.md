@@ -19,12 +19,17 @@ Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-wor
 |----------|--------|-------|
 | `research_workflow_v2` | ✅ Complete | PR #71 merged, PR #72 merged |
 | `restatement_workflow_v2` | ✅ Design Complete | No v2 needed - current implementation sufficient. Decisions documented. |
-| `strategic_plan_workflow_v2` | ✅ Ready for Merge | PR #76 - `graphv2.py` |
-| `report_generation_workflow_v2` | ✅ Ready for Merge | PR #76 - `graphv3.py` |
+| `strategic_plan_workflow_v2` | ✅ **MERGED** | PR #76 merged to dev → PR #82 merged to main |
+| `report_generation_workflow_v2` | ✅ **MERGED** | PR #76 merged to dev → PR #82 merged to main |
 
-### PR #76 + PR #79 Integration - COMPLETE
+### PR #76 + PR #79 Integration - COMPLETE ✅
 
 **Decision:** Integrated PR #79's better report generation nodes into PR #76's infrastructure.
+
+**Merge History:**
+- PR #76 merged to `dev` (rebase merge) - December 22, 2025
+- PR #82 merged `dev` to `main` (rebase merge) - December 22, 2025
+- PR #79 closed (superseded by PR #76)
 
 **Final Workflow Architecture (`graphv3.py`):**
 
@@ -49,29 +54,51 @@ Upgrade zena-workflow-spike workflows to v2 by merging the best of both zena-wor
 **Database Migration Required:** `a692adc41bc4_add_conclusions_bibliography_to_.py`
 > ⚠️ Run this migration on production before deploying PR #76
 
-### Pre-Merge Review Items
+### Pre-Merge Review Items - RESOLVED
 
-The following items need team decision before merge (see PR #76 comment for discussion):
+All 8 items have been reviewed and resolved. See PR #76 comments for full discussion.
 
-**Missing (Not Implemented):**
-1. Validation + refinement loop (Phase 3 from plan)
-2. "Derives From" section dependencies
-3. Per-section depth levels (Deep Dive / Moderate / Surface)
-4. Citation renumbering utility
+**Missing (Deferred to Future Work):**
+1. Validation + refinement loop (Phase 3 from plan) → **DEFERRED** - Advanced feature for future release
+2. "Derives From" section dependencies → **DEFERRED** - Complexity; address when needed
+3. Per-section depth levels (Deep Dive / Moderate / Surface) → **DEFERRED** - Complexity; address when needed
+4. Citation renumbering utility → **DEFERRED** - Will build when needed
 
-**Partial (Needs Verification):**
-5. Tool access - verify no Tavily calls in report generation
-6. `@observe()` decorators on all nodes
-7. Prompts in LangFuse vs hardcoded
-8. `langgraph.json` pointing to v3 graphs
+**Partial (Verified/Fixed):**
+5. Tool access - verify no Tavily calls in report generation → **OK** - Verified, only uses search_research_findings
+6. `@observe()` decorators on all nodes → **FIXED** - Added to all missing nodes
+7. Prompts in LangFuse vs hardcoded → **DONE** - All prompts managed in LangFuse
+8. `langgraph.json` pointing to v3 graphs → **DONE** - Already configured
 
-### Cleanup Needed (After Merge)
+### Cleanup Needed (Post-Merge)
 
 1. Remove `graphv2.py` (report generation) - replaced by `graphv3.py`
 2. Remove old nodes (`supervisor_tools_v2.py`, expansion supervisor, etc.)
 3. Remove unused states (`ReportStateV2`, `ReportState`)
 4. Remove `persist_report.py` - replaced by `persist_reportv3.py`
 5. Fix typo: `fecth_report_data.py` → `fetch_report_data.py`
+
+### Fixes Applied Before Merge
+
+1. **`@observe()` decorators** - Added to all nodes missing Langfuse tracing:
+   - `write_report.py:write_report_node`
+   - `write_report_plan.py:write_report_plan_node`
+   - `persist_strategic_plan.py:persist_strategic_plan_node`
+   - (report_researcher.py and report_researcher_supervisor.py already had decorators)
+
+2. **graphv2.py exports** - Fixed strategic_planning graphv2.py:
+   - Renamed `create_strategic_planning_workflow()` → `create_strategic_planning_workflow_v2()`
+   - Added `graph = create_strategic_planning_workflow_v2()` export for LangGraph Studio
+   - This matches the pattern in report_generation/graphv2.py
+
+### API Layer - No Feature Flag Needed
+
+**Decision:** We will NOT implement `use_v2` feature flags. Instead:
+- Remove all v1 workflow code
+- v2 becomes the only version
+- Existing API endpoints will automatically use v2 after cleanup
+
+The items from PR #79 (API routes with `use_v2` flag) are NOT needed.
 
 ---
 

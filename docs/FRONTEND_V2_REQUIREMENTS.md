@@ -1,174 +1,135 @@
 # Frontend Requirements for V2 Workflows
 
-**Date:** December 17, 2025
-**Related PR:** #76 - V2 Workflow Implementation
+**Date:** December 17, 2025 (Updated: December 22, 2025)
+**Backend PR:** #76 - ✅ **MERGED** to main (December 22, 2025)
 **Target Repository:** zena-web
 
 ---
 
-## Overview
+## ⚠️ IMPORTANT: Document Rewritten December 22, 2025
 
-The v2 workflow implementation introduces several new features that require frontend updates. This document outlines what the frontend team needs to implement to support these changes.
-
-The v2 workflows add:
-1. **Section sketches** in strategic plans (user reviews before report generation)
-2. **Section-level structure** with depth levels and dependencies
-
-> **Note:** Report versioning and per-section feedback are deferred to future PRs. See "Future Work" section.
+The previous version of this document contained inaccuracies about section sketches in strategic plans. This version has been rewritten after a thorough code review to reflect what is **actually implemented**.
 
 ---
 
-## Priority 1: Strategic Plan Review Enhancement
+## Status: Backend Ready for Frontend Integration
 
-### What Changed
+The v2 workflows are merged and deployed.
 
-The strategic plan now includes **section sketches** - draft outlines for each report section that users can review before full report generation begins.
+### What's Deployed
+- Strategic Planning v2 workflow
+- Report Generation v3 workflow with conclusions/bibliography
+- Database migrations for new fields
 
-### New Data Structure
+### What's NOT Implemented (Contrary to Previous Doc)
+- ❌ Section sketches in strategic plans - NOT stored
+- ❌ Structured `SectionSketch` objects - NOT returned by API
+- ❌ New intermediate status values - NOT implemented
 
-The `StrategicPlan` object now contains:
+---
+
+## Actual API Responses
+
+### GET /strategic-plans/{id}
+
+Returns:
 
 ```typescript
-interface StrategicPlan {
-  // Existing fields...
-  strategic_hypothesis: string;
-  plan_validation_score: number;
-  key_findings: { key_insights: KeyInsight[] };
-
-  // NEW: Section sketches from v2
-  report_structure: {
-    sections: SectionSketch[];
-  };
-}
-
-interface SectionSketch {
-  section_name: string;      // e.g., "Key Q & A", "Bases of Comparison"
-  content: string;           // Draft outline/sketch content (markdown)
-  sources: string[];         // Citation sources used
-  depth_level: string;       // "Deep Dive" | "Moderate Analysis" | "Surface-level"
+interface StrategicPlanDetail {
+  id: string;
+  report_id: string;
+  workspace_id: string;
+  strategic_hypothesis: string;        // The report plan TEXT (not structured)
+  recommendations_framework: object | null;  // Currently empty {}
+  argumentative_flow: object | null;         // Currently empty {}
+  report_structure: object | null;           // Currently empty {} - NO SECTION SKETCHES
+  key_findings: object | null;
+  plan_validation_score: number | null;
+  revision_count: number;
+  status: string;
+  feedback_text: string | null;
+  created_at: string;
+  updated_at: string;
 }
 ```
 
-### UI Requirements
+**Key Points:**
+- `strategic_hypothesis` contains the report plan as **plain text** (not structured sections)
+- `report_structure` is **empty** (`{}`) - there are NO section sketches stored here
+- Users approve/reject based on the text in `strategic_hypothesis`
 
-**Update `hypothesis-review-card.tsx`** to display section sketches:
+### GET /generated-reports/{id}
 
-1. **Add "Report Sections" tab or accordion** showing all section sketches
-2. **For each section, display:**
-   - Section name with depth level badge (color-coded)
-     - Deep Dive: Blue/Primary
-     - Moderate Analysis: Yellow/Warning
-     - Surface-level: Gray/Muted
-   - Sketch content (rendered markdown)
-   - Source count indicator
-   - Expandable sources list
-
-3. **Section order** should match the order in `report_structure.sections`
-
-4. **Approval flow remains the same** - user approves/rejects the entire strategic plan (including sketches)
-
-### Mockup Suggestion
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Strategic Plan Review                                        │
-├─────────────────────────────────────────────────────────────┤
-│ [Strategic Hypothesis Tab] [Section Sketches Tab] [Findings] │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│ Section Sketches (7 sections)                                │
-│                                                              │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ ▼ Key Q & A                            [Deep Dive] 🔵   │ │
-│ │   ───────────────────────────────────────────────────── │ │
-│ │   This section will address the 12 strategic questions  │ │
-│ │   provided by the client, including:                    │ │
-│ │   - Competitive landscape positioning [1]               │ │
-│ │   - Market share trends [2][3]                         │ │
-│ │   - Growth opportunities...                            │ │
-│ │                                                        │ │
-│ │   📚 3 sources                                          │ │
-│ └─────────────────────────────────────────────────────────┘ │
-│                                                              │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ ▶ Bases of Comparison                  [Deep Dive] 🔵   │ │
-│ └─────────────────────────────────────────────────────────┘ │
-│                                                              │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ ▶ Vulnerability Assessment        [Moderate] 🟡         │ │
-│ │   Derives from: Bases of Comparison                     │ │
-│ └─────────────────────────────────────────────────────────┘ │
-│                                                              │
-│              [Reject with Feedback]  [Approve Plan]          │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## ~~Priority 2: Report Version History~~ (DEFERRED)
-
-> **NOTE:** Report versioning is deferred until report approval/rejection is implemented. Without an approval step, there's no mechanism to create new versions. This will be addressed in a future PR.
-
-See "Future Work" section at the end of this document.
-
----
-
-## Priority 2: Report Section Display
-
-### What Changed
-
-Reports now have a clear **section structure** with metadata about each section's depth level.
-
-### New Data Structure
-
-The `GeneratedReport` now includes section metadata:
+Returns:
 
 ```typescript
-interface GeneratedReport {
-  // Existing...
+interface GeneratedReportDetail {
+  id: string;
+  report_id: string | null;
+  client_profile_id: string | null;
+  problem_restatement_id: string | null;
+  research_session_id: string | null;
+  report_type: string | null;
+  report_title: string;
   report_content_markdown: string;
 
-  // NEW: Section structure
+  // NEW in v3 - these ARE implemented
   report_structure: {
     name: string;
-    content_preview: string;  // First 200 chars
-  }[];
+    content_preview: string;  // First ~200 chars of section content
+  }[] | null;
+  executive_summary: string | null;
+  conclusions: string | null;         // NEW
+  bibliography: string | null;        // NEW
 
-  // Standard sections (always present)
-  executive_summary: string;
-  conclusions: string;
-  bibliography: string;
+  key_findings: object | null;
+  recommendations: object | null;
+  sources_cited: object | null;
+  validation_score: number | null;
+  revision_count: number;
+  status: string;
+  file_path: string | null;
+  s3_bucket: string | null;
+  s3_key: string | null;
+  created_at: string;
+  updated_at: string;
 }
 ```
 
-### UI Requirements
-
-**Update `generated-report-card.tsx`:**
-
-1. **Add section navigation/TOC**
-   - Clickable section links that scroll to section
-   - Show section names from `report_structure`
-
-2. **Clearly separate standard sections**
-   - Executive Summary (at top, before content sections)
-   - Content Sections (from strategic plan)
-   - Conclusions
-   - Bibliography
-
-3. **Section anchors in markdown**
-   - Add anchor IDs to section headers for navigation
+**Key Points:**
+- `conclusions` and `bibliography` are NEW fields ✅
+- `report_structure` contains simple `{name, content_preview}` objects ✅
+- NO `depth_level`, NO `sources[]`, NO structured section metadata
 
 ---
 
-## Priority 3: Progress Tracker Updates
+## What Frontend Needs to Implement
 
-### What Changed
+### Priority 1: Generated Report Display Updates
 
-The workflow now has more granular stages during strategic planning and report generation.
+**File:** `generated-report-card.tsx` (or equivalent)
 
-### New Status Values
+1. **Display new sections:**
+   - `conclusions` - Render as markdown after main content
+   - `bibliography` - Render as markdown at end of report
 
-Add support for these intermediate statuses:
+2. **Optional: Section navigation/TOC**
+   - Use `report_structure[]` to build a clickable TOC
+   - Each item has `name` and `content_preview`
+   - Link to section headers in the markdown content
+
+### Priority 2: Strategic Plan Review (NO CHANGES NEEDED)
+
+The strategic plan approval flow works the same as before:
+- Display `strategic_hypothesis` (the text plan)
+- User clicks Approve or Reject
+- No section sketches to display
+
+**There is NO new UI for section sketches** - they don't exist in the strategic plan.
+
+### Priority 3: Status Values (NO CHANGES NEEDED)
+
+The status flow is unchanged. Current statuses are:
 
 ```typescript
 type ReportStatus =
@@ -179,180 +140,113 @@ type ReportStatus =
   | 'researching'
   | 'research_ready'
   | 'research_approved'
-  | 'planning'                    // Strategic planning in progress
+  | 'planning'
   | 'planning_failed'
   | 'strategic_plan_ready'
   | 'strategic_plan_approved'
   | 'strategic_plan_rejected'
   | 'generating_report'
-  | 'expanding_sections'          // NEW: Section expansion in progress
-  | 'generating_standard_sections' // NEW: Exec summary, conclusions, etc.
   | 'completed'
   | 'failed';
 ```
 
-### UI Requirements
-
-**Update `report-progress-tracker.tsx`:**
-
-1. **Add sub-steps** for report generation phase:
-   - "Expanding sections" (shows during section expansion)
-   - "Generating summary & conclusions" (during standard sections)
-
-2. **Show section progress** (optional enhancement):
-   - "Expanding section 3 of 7..."
-
----
-
-## ~~Priority 4: Section-Level Feedback~~ (DEFERRED)
-
-> **NOTE:** Section-level feedback is deferred. See "Future Work" section.
-
----
-
-## API Changes Summary
-
-### Existing Endpoints (Updated Response)
-
-| Endpoint | Change |
-|----------|--------|
-| `GET /reports/{id}` | Response now includes `version`, `report_structure` with section sketches |
-| `GET /strategic_plans/{id}` | Response now includes `report_structure.sections` with sketches |
-
-### New Endpoints Needed (v2 Launch)
-
-None required for initial v2 launch. Version history and report approval endpoints are deferred.
-
-### Existing Endpoints (No Change)
-
-These continue to work as before:
-- `POST /strategic_plans/{id}/approve`
-- `POST /strategic_plans/{id}/reject`
-- `POST /problem_restatements/{id}/approve`
-- `POST /problem_restatements/{id}/reject`
+No new intermediate statuses (`expanding_sections`, `generating_standard_sections`) were added.
 
 ---
 
 ## Type Updates for `@meltstudio/client-common`
 
-Update these types in the shared types package:
+### Update GeneratedReport Type Only
 
 ```typescript
-// Add to StrategicPlan
-interface StrategicPlan {
-  id: string;
-  strategic_hypothesis: string;
-  plan_validation_score: number;
-  key_findings: { key_insights: KeyInsight[] };
-
-  // NEW
-  report_structure: {
-    sections: SectionSketch[];
-  };
-}
-
-interface SectionSketch {
-  section_name: string;
-  content: string;
-  sources: string[];
-  depth_level: 'Deep Dive' | 'Moderate Analysis' | 'Surface-level';
-}
-
-// Add to GeneratedReport
 interface GeneratedReport {
   id: string;
+  report_id: string | null;
+  report_type: string | null;
   report_title: string;
   report_content_markdown: string;
-  executive_summary: string;
 
-  // NEW for v2
-  conclusions: string;
-  bibliography: string;
+  // NEW for v3
+  conclusions: string | null;
+  bibliography: string | null;
   report_structure: {
     name: string;
     content_preview: string;
-  }[];
+  }[] | null;
 
-  // DEFERRED (future PR)
-  // version: number;
-  // status: 'draft' | 'approved';
-  // feedback_text: string;
+  // Existing fields...
+  executive_summary: string | null;
+  key_findings: object | null;
+  recommendations: object | null;
+  sources_cited: object | null;
+  validation_score: number | null;
+  revision_count: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
 }
 ```
+
+### StrategicPlan Type - NO CHANGES
+
+The `StrategicPlan` type does not need updates. The `report_structure` field exists but is empty.
 
 ---
 
 ## Implementation Checklist
 
-### Phase 1: Strategic Plan Section Sketches (Required for v2 launch)
-- [ ] Update `StrategicPlan` type to include `report_structure.sections`
-- [ ] Add `SectionSketch` type
-- [ ] Update `hypothesis-review-card.tsx` to display section sketches
-- [ ] Add depth level badges with color coding
-- [ ] Test approval flow with new data structure
+### Required for v3
+- [ ] Add `conclusions` field to `GeneratedReport` type
+- [ ] Add `bibliography` field to `GeneratedReport` type
+- [ ] Update `report_structure` type to `{name, content_preview}[]`
+- [ ] Display conclusions section in report view
+- [ ] Display bibliography section in report view
 
-### Phase 2: Report Display Enhancements (Required for v2 launch)
-- [ ] Update `GeneratedReport` type with new fields (`conclusions`, `bibliography`, `report_structure`)
-- [ ] Add section navigation/TOC to `generated-report-card.tsx`
-- [ ] Display conclusions and bibliography sections
+### Optional Enhancements
+- [ ] Add section navigation/TOC using `report_structure`
+- [ ] Highlight current section during scroll
 
-### Phase 3: Progress Tracker Updates (Optional for v2 launch)
-- [ ] Add new status values to `ReportStatus` type
-- [ ] Update `report-progress-tracker.tsx` with sub-steps
-- [ ] Add section progress indicators
-
----
-
-## Future Work (Separate PRs)
-
-The following features are **NOT part of v2 launch** and will be implemented in future PRs:
-
-### Report Approval/Rejection Flow
-- Add `POST /generated-reports/{id}/actions/approve` endpoint
-- Add `POST /generated-reports/{id}/actions/reject` endpoint
-- Add `feedback_text` field to `GeneratedReport` model
-- Add approval UI to `generated-report-card.tsx`
-- Implement report regeneration workflow based on feedback
-
-### Report Version History
-- Add `version` field to `GeneratedReport`
-- Add `GET /reports/{id}/versions` endpoint
-- Add `GET /reports/{id}/versions/{ver}` endpoint
-- Create `/zena-reports/[id]/versions/` page
-- Add `useReportVersionHistory()` hook
-- Add version comparison view
-
-### Per-Section Feedback
-- Add `section_feedback` field to `GeneratedReport`
-- Add per-section feedback API endpoints
-- Add feedback button per section in UI
-- Implement per-section regeneration workflow
+### NOT Needed (Previous Doc Was Wrong)
+- ~~Section sketches in strategic plan review~~
+- ~~SectionSketch type with depth_level, sources~~
+- ~~Accordion UI for section sketches~~
+- ~~Depth level badges (Deep Dive, Moderate, Surface-level)~~
+- ~~New status values for progress tracker~~
 
 ---
 
-## Questions for Frontend Team
+## Summary of What Changed vs. What Was Promised
 
-1. **Section sketches display:** Tabs vs accordion vs separate page?
-2. **Version history:** Inline panel vs separate page?
-3. **Depth level colors:** Match existing design system or new palette?
-4. **Mobile responsiveness:** How should section sketches display on mobile?
+| Feature | Previous Doc Said | Actual Implementation |
+|---------|------------------|----------------------|
+| Section sketches in strategic plan | ✅ Yes, with structured objects | ❌ No - `report_structure` is empty |
+| SectionSketch with name, content, sources, depth_level | ✅ Yes | ❌ No - never implemented |
+| Depth level indicators | ✅ Deep Dive, Moderate, Surface-level | ❌ Not implemented |
+| User reviews sketches before approval | ✅ Yes | ❌ No - user reviews text plan only |
+| Conclusions field | ✅ Yes | ✅ Yes - works |
+| Bibliography field | ✅ Yes | ✅ Yes - works |
+| report_structure in GeneratedReport | ✅ Structured sections | ✅ Partial - just {name, content_preview} |
+| New progress statuses | ✅ expanding_sections, generating_standard_sections | ❌ Not implemented |
 
 ---
 
-## API Reference
+## Future Work (If Needed)
 
-The following API fields are available for v2 (PR #76):
+If section sketches before approval are desired, this would require:
 
-| Endpoint                    | Field             | Type   | Description                     |
-|-----------------------------|-------------------|--------|---------------------------------|
-| GET /generated-reports/{id} | executive_summary | string | Executive summary text          |
-| GET /generated-reports/{id} | conclusions       | string | Conclusions section text        |
-| GET /generated-reports/{id} | bibliography      | string | Bibliography section text       |
-| GET /generated-reports/{id} | report_structure  | object | Section previews                |
-| GET /strategic-plans/{id}   | report_structure  | object | Full plan with section sketches |
+1. **Backend work:**
+   - Add section sketch generation to strategic planning workflow
+   - Persist sketches to `strategic_plans.report_structure`
+   - Define structured schema for sketches
+
+2. **Frontend work:**
+   - Add section sketch display to plan review UI
+   - Add depth level badges
+
+This is NOT currently planned.
 
 ---
 
 ## Contact
 
-Reach out to Manuel if anything is unclear or if you need clarification on the backend data structures.
+Questions? Reach out to Manuel for clarification.
