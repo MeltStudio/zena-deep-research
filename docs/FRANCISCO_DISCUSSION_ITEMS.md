@@ -2,164 +2,76 @@
 
 ## Summary
 
-After merging PR #76 (v2 workflows) and preparing frontend requirements, we discovered significant gaps between what was planned and what was implemented. This document outlines the issues that need resolution.
+Two items need discussion/decision for v2 workflows.
 
 ---
 
-## Issue 1: Section Sketches Not Implemented in Strategic Planning
+## Issue 1: Section Sketches - Clarifying the UX Flow
 
-### What Was Planned (Integration Plan)
+### What's Implemented
 
-The design called for users to review section-level sketches before approving the strategic plan:
+Section sketches ARE implemented, but in the **Report Generation** workflow, not Strategic Planning:
 
-1. Strategic Planning v2 generates section sketches with:
-   - `name` - Section title
-   - `content` - Draft outline/sketch content
-   - `sources` - Citations used
-   - `depth_level` - "Deep Dive" | "Moderate Analysis" | "Surface-level"
+1. **Strategic Planning v2** → generates text `report_plan` (stored in `strategic_hypothesis`)
+2. **Report Generation v3** → `report_supervisor` delegates sections to `report_researcher` subgraph
+3. **Report Researcher** → does research, compresses, then `write_report_section` generates `report_section_sketch`
+4. **Persist Report v3** → saves sketches to `generated_reports.report_structure` as `{name, content_preview}`
 
-2. Sketches stored in `strategic_plans.report_structure`
+### Current UX Flow
 
-3. Users review section sketches in the UI before clicking "Approve"
+1. User reviews strategic plan (text-based `strategic_hypothesis`)
+2. User approves → triggers report generation
+3. Report generation creates section sketches internally
+4. User sees sketches only in the **final generated report**
 
-4. This gives users visibility into report structure before full generation begins
+### Question for Francisco
 
-### What Was Actually Implemented
+**Is this the intended UX?**
 
-1. Strategic Planning v2 generates a text-based `report_plan` stored in `strategic_hypothesis`
+- **Current:** User approves plan first, then sees sketches after report is complete
+- **Alternative:** User could preview sketches before full report generation (would require moving sketch generation earlier)
 
-2. `report_structure` is saved as **empty** `{}`
-
-3. Section sketches are created **during report generation** (in `report_supervisor` step), not during strategic planning
-
-4. Users only see section-level detail **after** the report is already generated
-
-### Code Evidence
-
-**`persist_strategic_plan.py:55-66`:**
-```python
-strategic_plan_id = db_manager.save_strategic_plan(
-    report_id=report_id,
-    workspace_id=workspace_id,
-    strategic_hypothesis=report_plan,
-    recommendations_framework={},
-    argumentative_flow={},
-    report_structure={},  # <-- EMPTY
-    key_findings={},
-    ...
-)
-```
-
-**`state.py` (Strategic Planning):**
-```python
-class StrategicPlanningStateV2(TypedDict):
-    report_plan: str  # <-- Just a string, not structured sections
-    ...
-```
-
-### Impact
-
-- Users approve strategic plans without seeing section-level detail
-- The "review before generation" workflow doesn't exist
-- Frontend was about to build UI for a feature that isn't there
-- This was a key differentiator in the v2 design
-
-### Questions
-
-1. Was this an intentional scope reduction, or was it missed during implementation?
-2. Should we add section sketch generation to the strategic planning workflow?
-3. If yes, what's the priority vs. other work?
-4. What should the structured schema for sketches look like?
+If current flow is intentional, no changes needed.
 
 ---
 
-## Issue 2: Research Workflow v2 Status
+## Issue 2: Structured API Response Fields - NEEDED
 
-### Current State
+The following fields are used internally (in prompts/LLM context) but NOT exposed in the API response. These need to be added:
 
-- `research_workflow/graphv2.py` exists in the codebase
-- The Celery task (`research_tasks.py`) has a `use_v2` flag that defaults to `False`
-- Research in production still uses v1
+| Feature | Current State | What's Needed |
+|---------|---------------|---------------|
+| `SectionSketch` structured type | Sketches are `list[str]` | Structured objects with `name`, `content`, `sources`, `depth_level` |
+| Depth level per section | Embedded in text (used by LLM) | Expose as separate field in API response |
+| Section-level sources | Embedded in sketch text | Expose as `sources[]` array per section |
 
-### From the Cleanup Email
+### Work Required
 
-The cleanup PR instructions tell the Python team to **delete** `research_workflow/graphv2.py`.
+1. **Update `report_section_sketch` output** - Change from plain string to structured object
+2. **Parse/extract depth_level** - From the report_plan or section assignment
+3. **Parse/extract sources** - From the sketch content into a separate array
+4. **Update `persist_reportv3.py`** - Save structured sketches to `report_structure`
+5. **Update API schema** - `GeneratedReportDetail.report_structure` to include new fields
 
-### Questions
+### Questions for Francisco
 
-1. Is research v2 something we want to keep and enable?
-2. Or should we delete it as instructed in the cleanup email?
-3. If we keep it, when would we enable it?
-
----
-
-## Issue 3: Missing Features from Original Plan
-
-These were in the original frontend requirements doc but are NOT implemented:
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `SectionSketch` structured type | ❌ Not implemented | Was supposed to have name, content, sources, depth_level |
-| Depth level indicators | ❌ Not implemented | "Deep Dive", "Moderate Analysis", "Surface-level" |
-| Intermediate progress statuses | ❌ Not implemented | `expanding_sections`, `generating_standard_sections` |
-| Section-level sources in sketches | ❌ Not implemented | Sources array per section |
-
-### Questions
-
-1. Which of these features are still desired?
-2. What's the priority for implementing them?
-3. Should we create tickets for them?
-
----
-
-## What IS Working
-
-To be clear, these features ARE implemented and working:
-
-| Feature | Status |
-|---------|--------|
-| Strategic Planning v2 (text-based plan) | ✅ Working |
-| Report Generation v3 | ✅ Working |
-| `conclusions` field in GeneratedReport | ✅ Working |
-| `bibliography` field in GeneratedReport | ✅ Working |
-| `report_structure` with {name, content_preview} in GeneratedReport | ✅ Working |
-| ResearchFinding table with embeddings | ✅ Deployed |
-| Research search tools | ✅ Deployed |
+1. Should we parse sources from the sketch text, or have the LLM output them separately?
+2. Should depth_level come from the report_plan (input) or be determined by the researcher?
+3. Priority for this work vs other items?
 
 ---
 
 ## Recommended Actions
 
-### Option A: Add Section Sketches to Strategic Planning (Recommended)
+### Issue 1: Section Sketch UX Flow
+- **Action:** Confirm with Francisco if current flow is intentional
+- **If yes:** No changes needed
+- **If no:** Plan work to add sketch preview before report generation
 
-1. Create new node in strategic planning workflow to generate section sketches
-2. Define structured schema for `SectionSketch`
-3. Persist sketches to `strategic_plans.report_structure`
-4. Frontend builds review UI
-5. Estimated effort: 2-3 days backend + frontend
-
-### Option B: Accept Current Implementation
-
-1. Users approve based on text plan only
-2. Section detail only visible in final report
-3. Update integration plan to reflect this is intentional
-4. No additional work needed
-
----
-
-## Files Changed
-
-For reference, these docs were updated today:
-
-1. `docs/FRONTEND_V2_REQUIREMENTS.md` - Rewritten to reflect actual implementation
-2. `docs/INTEGRATION_PLAN.md` - Updated with completed phases and pending items
-
----
-
-## Next Steps
-
-1. Review this document with Francisco
-2. Decide on section sketches: implement or accept current behavior
-3. Decide on research v2: keep or delete
-4. Update integration plan with decisions
-5. Communicate final plan to frontend team
+### Issue 2: Structured API Response
+- **Action:** Add structured `SectionSketch` fields to API response
+- **Work items:**
+  1. Update sketch output to structured object (name, content, sources, depth_level)
+  2. Update persist_reportv3.py to save structured data
+  3. Update API schema
+- **Estimate:** 1-2 days backend
